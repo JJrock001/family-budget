@@ -1416,7 +1416,12 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
         body: JSON.stringify({ fileData: b64, password }),
       });
       const json = await resp.json();
-      if (json.encrypted) { setNeedPassword(true); setPdfB64(b64); return; }
+      if (json.encrypted) {
+        setNeedPassword(true);
+        setPdfB64(b64);
+        if (json.wrongPassword) setError('รหัสผ่านไม่ถูกต้อง ลองใหม่อีกครั้ง');
+        return;
+      }
       if (json.error) throw new Error(json.error);
       const parsed = parseStatementText(json.text, data.expCats);
       setNeedPassword(false);
