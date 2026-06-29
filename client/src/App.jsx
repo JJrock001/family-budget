@@ -125,6 +125,106 @@ async function deleteAllPhotos() {
 async function meGet() { return localStorage.getItem(MEK); }
 async function meSet(v) { localStorage.setItem(MEK, v); }
 
+/* ---------------- CSV statement import helpers ---------------- */
+function splitCSVLine(line) {
+  const result = []; let cur = '', inQ = false;
+  for (const ch of line) {
+    if (ch === '"') { inQ = !inQ; continue; }
+    if (ch === ',' && !inQ) { result.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  result.push(cur.trim()); return result;
+}
+
+function thaiDateToISO(str) {
+  str = (str || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    let [, d, mo, y] = m;
+    if (parseInt(y) > 2400) y = String(parseInt(y) - 543);
+    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  return null;
+}
+
+function parseNum(str) {
+  if (!str) return 0;
+  return parseFloat(String(str).replace(/,/g,'').replace(/[^0-9.-]/g,'')) || 0;
+}
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+}
+
+function guessCategory(desc, expCats) {
+  const d = desc.toLowerCase();
+  if (/อาหาร|food|restaurant|coffee|cafe|7-11|eleven|lotus|tops|villa|makro|big c|gourmet|ร้านอาหาร|foodpanda|grab food|lineman/.test(d)) return 'อาหาร & เครื่องดื่ม';
+  if (/น้ำมัน|ptt|shell|caltex|esso|bangchak|บางจาก|pt gas/.test(d)) return 'เดินทาง/น้ำมัน';
+  if (/grab|uber|bolt|taxi|bts|mrt|airport|สนามบิน/.test(d)) return 'เดินทาง/น้ำมัน';
+  if (/ไฟฟ้า|ประปา|electric|pea |mea |pwa |water bill|แก๊ส/.test(d)) return 'สาธารณูปโภค (น้ำ/ไฟ/แก๊ส)';
+  if (/dtac|ais|true move|nt |internet|wifi|โทรศัพท์/.test(d)) return 'อินเทอร์เน็ต/มือถือ';
+  if (/โรงพยาบาล|hospital|clinic|คลินิก|pharmacy|dental|dentist/.test(d)) return 'สุขภาพ/รักษาพยาบาล';
+  if (/school|โรงเรียน|มหาวิทยาลัย|university|tutor/.test(d)) return 'การศึกษา';
+  if (/insurance|ประกัน/.test(d)) return 'ผ่อน/หนี้/ประกัน';
+  if (/toyota|honda|isuzu|mazda|bmw|mercedes|car service|ซ่อมรถ/.test(d)) return 'รถยนต์ (ผ่อน/ซ่อม/ประกัน)';
+  return expCats.includes('อื่น ๆ') ? 'อื่น ๆ' : (expCats[expCats.length - 1] || '');
+}
+
+function parseStatementCSV(text, expCats) {
+  text = text.replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const DATE_KW = ['วันที่', 'date', 'txn date', 'transaction date', 'posting date', 'value date'];
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const cols = splitCSVLine(lines[i]).map(c => c.toLowerCase());
+    if (DATE_KW.some(k => cols.some(c => c.includes(k)))) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) throw new Error('ไม่พบหัวตาราง กรุณาใช้ไฟล์ Statement CSV จากธนาคาร');
+
+  const headers = splitCSVLine(lines[headerIdx]).map(c => c.toLowerCase().trim());
+  const fc = (...kws) => headers.findIndex(h => kws.some(k => h.includes(k)));
+
+  const dateCol   = fc('วันที่', 'date', 'txn date', 'posting', 'value date');
+  const descCol   = fc('รายละเอียด', 'รายการ', 'description', 'transaction', 'channel', 'detail', 'remark', 'memo', 'particulars', 'narration');
+  const debitCol  = fc('ถอน', 'debit', 'withdrawal', 'เดบิต', 'จ่าย', 'credit(thb)' /* Bangkok Bank uses reversed naming */);
+  const creditCol = fc('ฝาก', 'credit', 'deposit', 'เครดิต', 'รับ');
+  const amtCol    = (debitCol === -1 && creditCol === -1) ? fc('จำนวนเงิน', 'amount', 'เงิน') : -1;
+
+  if (dateCol === -1) throw new Error('ไม่พบคอลัมน์วันที่ในไฟล์นี้');
+
+  const results = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = splitCSVLine(lines[i]);
+    if (cols.length < 2) continue;
+
+    const isoDate = thaiDateToISO(cols[dateCol] || '');
+    if (!isoDate) continue;
+
+    let amount = 0;
+    if (amtCol !== -1) {
+      amount = parseNum(cols[amtCol]);
+    } else {
+      const cr = parseNum(cols[creditCol] ?? '');
+      const dr = parseNum(cols[debitCol] ?? '');
+      if (cr > 0) amount = cr;
+      else if (dr > 0) amount = -dr;
+    }
+    if (amount === 0) continue;
+
+    const description = ((descCol !== -1 ? cols[descCol] : '') || '').trim();
+    const category = guessCategory(description, expCats);
+    const id = 'imp_' + hashStr(`${isoDate}_${amount}_${description.slice(0,30)}`);
+
+    results.push({ id, date: isoDate, description, amount, category });
+  }
+
+  return results;
+}
+
 /* ---------------- recurring auto-fill ---------------- */
 function applyRecurring(data) {
   const now = new Date();
@@ -297,6 +397,16 @@ export default function App() {
     flash('ลบแล้ว');
   };
 
+  const [showImport, setShowImport] = useState(false);
+  const importTx = (txList) => {
+    const existingIds = new Set(data.tx.map(t => t.id));
+    const newTx = txList.filter(t => !existingIds.has(t.id));
+    if (newTx.length === 0) { flash('ไม่มีรายการใหม่ (นำเข้าแล้วทั้งหมด)'); return 0; }
+    update({ ...data, tx: [...newTx, ...data.tx] });
+    flash(`นำเข้า ${newTx.length} รายการแล้ว`);
+    return newTx.length;
+  };
+
   if (loading) return (
     <div style={{ background: T.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'IBM Plex Sans Thai, sans-serif', color: T.sub }}>
       กำลังโหลดข้อมูล…
@@ -321,7 +431,7 @@ export default function App() {
         {view === 'dashboard' && <Dashboard {...{ period, shiftMonth, income, expense, balance, savingRate, byCat, byPerson, monthly, periodTx, data, setView, setDetail, me, onSwitchUser: () => setMe(null), scope, setScope }} />}
         {view === 'add' && <AddScreen {...{ data, saveTx, setView, editing, me, clearEdit: () => setEditing(null), defaultDate: period.y === now.getFullYear() ? today() : `${period.y}-${String(period.m + 1).padStart(2, '0')}-01` }} />}
         {view === 'list' && <ListScreen {...{ data, period, shiftMonth, setDetail, me, scope, setScope }} />}
-        {view === 'settings' && <SettingsScreen {...{ data, update, flash, me, admin, isAdmin, onSwitchUser: () => setMe(null) }} />}
+        {view === 'settings' && <SettingsScreen {...{ data, update, flash, me, admin, isAdmin, onSwitchUser: () => setMe(null), onImport: () => setShowImport(true) }} />}
       </div>
 
       <nav className="fixed bottom-0 left-0 right-0 z-20" style={{ background: 'rgba(255,255,255,0.96)', borderTop: `1px solid ${T.line}`, backdropFilter: 'blur(8px)' }}>
@@ -335,6 +445,8 @@ export default function App() {
           <NavBtn icon={SettingsIcon} label="ตั้งค่า" active={view === 'settings'} onClick={() => setView('settings')} />
         </div>
       </nav>
+
+      {showImport && <StatementImportSheet data={data} importTx={importTx} me={me} onClose={() => setShowImport(false)} />}
 
       {detail && detail._catFilter && <CategorySheet name={detail._catFilter} data={data} onClose={() => setDetail(null)} />}
       {detail && !detail._catFilter && (
@@ -916,7 +1028,7 @@ function Sheet({ children, onClose }) {
 }
 
 /* ---------------- Settings ---------------- */
-function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser }) {
+function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser, onImport }) {
   const exportCSV = () => {
     const head = ['วันที่', 'ประเภท', 'ผู้เกี่ยวข้อง', 'หมวด', 'รายการ', 'จำนวนเงิน', 'วิธีชำระ', 'หมายเหตุ'];
     const lines = data.tx.slice().sort((a, b) => a.date.localeCompare(b.date)).map(t =>
@@ -978,9 +1090,10 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser 
 
           <Section title="ข้อมูล & สำรอง">
             <div className="space-y-2">
+              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv)" onClick={onImport} />
               <ActionRow icon={Download} label="ส่งออกเป็น CSV (เปิดใน Excel/M365)" onClick={exportCSV} />
               <ActionRow icon={Download} label="สำรองข้อมูลทั้งหมด (.json)" onClick={exportJSON} />
-              <ActionRow icon={Upload} label="นำเข้าข้อมูลจากไฟล์สำรอง" onClick={() => impRef.current?.click()} />
+              <ActionRow icon={Upload} label="นำเข้าข้อมูลจากไฟล์สำรอง (.json)" onClick={() => impRef.current?.click()} />
               <input ref={impRef} type="file" accept="application/json" onChange={importJSON} className="hidden" />
             </div>
           </Section>
@@ -1011,7 +1124,10 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser 
           <EditList title="หมวดรายจ่าย" items={data.expCats} readOnly />
           <EditList title="หมวดรายรับ" items={data.incCats} readOnly />
           <Section title="ข้อมูล">
-            <ActionRow icon={Download} label="ส่งออกเป็น CSV (สำรองไว้ใน OneDrive)" onClick={exportCSV} />
+            <div className="space-y-2">
+              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv)" onClick={onImport} />
+              <ActionRow icon={Download} label="ส่งออกเป็น CSV (สำรองไว้ใน OneDrive)" onClick={exportCSV} />
+            </div>
           </Section>
         </>
       )}
@@ -1191,5 +1307,187 @@ function RecurringSettings({ data, update }) {
         </div>
       )}
     </Section>
+  );
+}
+
+/* ---------------- Statement Import Sheet ---------------- */
+function StatementImportSheet({ data, importTx, me, onClose }) {
+  const [step, setStep] = useState('upload');
+  const [who, setWho] = useState(me);
+  const [rows, setRows] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [cats, setCats] = useState({});
+  const [error, setError] = useState('');
+  const fileRef = useRef();
+  const existingIds = useMemo(() => new Set(data.tx.map(t => t.id)), [data.tx]);
+
+  const handleFile = (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    setError('');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parseStatementCSV(e.target.result, data.expCats);
+        if (parsed.length === 0) { setError('ไม่พบข้อมูลในไฟล์ หรือทุกรายการมียอด 0'); return; }
+        setRows(parsed);
+        const initSel = new Set();
+        const initCats = {};
+        parsed.forEach((r, i) => {
+          if (!existingIds.has(r.id)) initSel.add(i);
+          initCats[i] = r.category;
+        });
+        setSelected(initSel);
+        setCats(initCats);
+        setStep('preview');
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    reader.readAsText(f, 'UTF-8');
+  };
+
+  const toggleRow = (i) => {
+    setSelected(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s; });
+  };
+
+  const toggleAll = () => {
+    const newable = rows.map((_, i) => i).filter(i => !existingIds.has(rows[i].id));
+    setSelected(selected.size < newable.length ? new Set(newable) : new Set());
+  };
+
+  const confirm = () => {
+    const txList = [];
+    rows.forEach((r, i) => {
+      if (!selected.has(i)) return;
+      txList.push({
+        id: r.id,
+        type: r.amount > 0 ? 'income' : 'expense',
+        date: r.date,
+        who,
+        category: cats[i] || r.category,
+        merchant: r.description || (r.amount > 0 ? 'รายรับ' : 'รายจ่าย'),
+        amount: Math.abs(r.amount),
+        pay: r.amount < 0 ? 'โอน/PromptPay' : '',
+        note: 'นำเข้าจาก Statement',
+        hasPhoto: false,
+      });
+    });
+    importTx(txList);
+    onClose();
+  };
+
+  const newableCount = rows.filter((_, i) => !existingIds.has(rows[i]?.id)).length;
+  const selectedCount = [...selected].filter(i => !existingIds.has(rows[i]?.id)).length;
+  const dupCount = rows.filter(r => existingIds.has(r.id)).length;
+  const allCats = [...data.expCats, ...data.incCats].filter((v, i, a) => a.indexOf(v) === i);
+
+  return (
+    <Sheet onClose={onClose}>
+      <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Kanit, sans-serif' }}>นำเข้า Statement ธนาคาร</h2>
+
+      {step === 'upload' && (
+        <>
+          <p className="text-sm mb-4" style={{ color: T.sub }}>รองรับ KBank · SCB · Krungthai · Bangkok Bank</p>
+
+          <div className="mb-4">
+            <p className="text-xs font-medium mb-2" style={{ color: T.sub }}>Statement ของใคร?</p>
+            <div className="flex flex-wrap gap-2">
+              {data.members.map(m => <Chip key={m} active={who === m} onClick={() => setWho(m)}>{m}</Chip>)}
+            </div>
+          </div>
+
+          <button onClick={() => fileRef.current?.click()}
+            className="w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2"
+            style={{ background: T.brand, color: '#fff' }}>
+            <Upload size={20} /> เลือกไฟล์ CSV
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} className="hidden" />
+
+          {error && <p className="text-sm mt-3 text-center rounded-xl p-2" style={{ color: T.expense, background: '#FCEBE6' }}>{error}</p>}
+
+          <div className="mt-4 rounded-xl p-3 text-xs leading-relaxed" style={{ background: T.faint, color: T.sub }}>
+            <b style={{ color: T.ink }}>วิธีดาวน์โหลด Statement CSV:</b><br />
+            • <b>KBank:</b> K Plus → บัญชี → ดูรายการ → ส่งออก (.csv)<br />
+            • <b>SCB:</b> SCB Easy → บัญชี → ประวัติ → Export<br />
+            • <b>Krungthai:</b> Krungthai NEXT → Statement → ดาวน์โหลด<br />
+            • <b>Bangkok Bank:</b> Bualuang mBanking → บัญชี → Statement
+          </div>
+        </>
+      )}
+
+      {step === 'preview' && (
+        <>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm" style={{ color: T.sub }}>
+              {rows.length} รายการ
+              {dupCount > 0 && <span> · <span style={{ color: T.sub }}>{dupCount} ซ้ำ</span></span>}
+              {' · '}<span style={{ color: T.brand }}>{selectedCount} เลือก</span>
+            </p>
+            <button onClick={toggleAll} className="text-xs font-medium px-2 py-1 rounded-lg"
+              style={{ color: T.brand, background: T.brand + '10' }}>
+              {selectedCount < newableCount ? 'เลือกทั้งหมด' : 'ยกเลิกทั้งหมด'}
+            </button>
+          </div>
+
+          <div className="space-y-1.5 overflow-y-auto mb-4" style={{ maxHeight: '44vh' }}>
+            {rows.map((r, i) => {
+              const isDup = existingIds.has(r.id);
+              const isSel = selected.has(i);
+              return (
+                <div key={i} onClick={() => !isDup && toggleRow(i)}
+                  className="flex items-start gap-2 p-2.5 rounded-xl transition-colors"
+                  style={{
+                    background: isDup ? T.faint : isSel ? T.brand + '0D' : '#fff',
+                    border: `1px solid ${isDup ? T.line : isSel ? T.brand + '55' : T.line}`,
+                    opacity: isDup ? 0.55 : 1,
+                    cursor: isDup ? 'default' : 'pointer',
+                  }}>
+                  <div className="flex-shrink-0 mt-0.5">
+                    {isDup ? (
+                      <span className="text-xs px-1 py-0.5 rounded" style={{ background: T.line, color: T.sub }}>ซ้ำ</span>
+                    ) : (
+                      <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? T.brand : T.line}`, background: isSel ? T.brand : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {isSel && <Check size={11} color="#fff" strokeWidth={3} />}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-1">
+                      <p className="text-xs" style={{ color: T.sub }}>{fmtDate(r.date)}</p>
+                      <span className="text-sm font-semibold flex-shrink-0" style={{ fontFamily: 'Kanit, sans-serif', color: r.amount > 0 ? T.income : T.expense }}>
+                        {r.amount > 0 ? '+' : ''}{baht(Math.abs(r.amount))}
+                      </span>
+                    </div>
+                    <p className="text-sm truncate" style={{ color: T.ink }}>{r.description || '—'}</p>
+                    {!isDup && isSel && (
+                      <select value={cats[i] || ''} onChange={e => { e.stopPropagation(); setCats(prev => ({...prev, [i]: e.target.value})); }}
+                        onClick={e => e.stopPropagation()}
+                        className="mt-1 w-full text-xs px-2 py-1 rounded-lg outline-none"
+                        style={{ background: '#fff', border: `1px solid ${T.line}`, color: T.sub, fontFamily: 'IBM Plex Sans Thai, sans-serif' }}>
+                        {allCats.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => { setStep('upload'); setRows([]); setSelected(new Set()); setError(''); }}
+              className="flex-1 py-3 rounded-xl text-sm font-medium"
+              style={{ background: T.faint, color: T.ink, border: `1px solid ${T.line}` }}>
+              เปลี่ยนไฟล์
+            </button>
+            <button onClick={confirm} disabled={selectedCount === 0}
+              className="flex-1 py-3 rounded-xl text-sm font-semibold text-white"
+              style={{ background: selectedCount > 0 ? T.brand : T.line }}>
+              นำเข้า {selectedCount} รายการ
+            </button>
+          </div>
+        </>
+      )}
+    </Sheet>
   );
 }
