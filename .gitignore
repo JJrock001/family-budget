@@ -10,6 +10,11 @@ build/
 .env.local
 .env.*.local
 
+# Database
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Logs
 *.log
 npm-debug.log*
