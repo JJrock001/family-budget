@@ -32,17 +32,17 @@ const INC_ICON = {
 };
 
 const DEFAULTS = {
-  members: ['โอ๋','เก๋','เจเจ','เจนนี่','ส่วนกลาง'],
+  members: ['Oh','JJ','Jenny','Kea','ส่วนกลาง'],
   expCats: ['อาหาร & เครื่องดื่ม','ของใช้ในบ้าน','สาธารณูปโภค (น้ำ/ไฟ/แก๊ส)','อินเทอร์เน็ต/มือถือ','เดินทาง/น้ำมัน','รถยนต์ (ผ่อน/ซ่อม/ประกัน)','การศึกษา','สุขภาพ/รักษาพยาบาล','ช้อปปิ้ง/เสื้อผ้า','สังสรรค์/บันเทิง/ท่องเที่ยว','ผ่อน/หนี้/ประกัน','บริจาค/ทำบุญ','อื่น ๆ'],
   incCats: ['เงินเดือน','โบนัส','รายได้ธุรกิจ/SMI','ดอกเบี้ย/เงินปันผล','ค่าเช่า','รายได้อื่น ๆ'],
   pays: ['เงินสด','โอน/PromptPay','บัตรเครดิต','บัตรเดบิต','e-Wallet'],
-  admin: 'เก๋',
+  admin: 'Kea',
   budgets: {},
   recurring: [
-    { id:'rec_o',  type:'income', who:'โอ๋',    category:'เงินเดือน', merchant:'เงินเดือน', amount:78390,    pay:'', note:'', dayOfMonth:1 },
-    { id:'rec_k',  type:'income', who:'เก๋',    category:'เงินเดือน', merchant:'เงินเดือน', amount:69708.33, pay:'', note:'', dayOfMonth:1 },
-    { id:'rec_jj', type:'income', who:'เจเจ',   category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
-    { id:'rec_jn', type:'income', who:'เจนนี่', category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_o',  type:'income', who:'Oh',    category:'เงินเดือน', merchant:'เงินเดือน', amount:78390,    pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_k',  type:'income', who:'Kea',   category:'เงินเดือน', merchant:'เงินเดือน', amount:69708.33, pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_jj', type:'income', who:'JJ',    category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_jn', type:'income', who:'Jenny', category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
   ],
   tx: [],
 };
@@ -246,7 +246,7 @@ export default function App() {
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 1800); };
   const pickMe = (name) => { setMe(name); meSet(name); };
 
-  const admin = data.admin || 'เก๋';
+  const admin = data.admin || 'Kea';
   const isAdmin = me === admin;
   const canEditTx = (t) => isAdmin || me === t.who;
   const inScope = (t) => scope === 'all' || t.who === me;
@@ -411,7 +411,7 @@ function IdentityPicker({ members, admin, onPick }) {
 
 /* ---------------- Dashboard ---------------- */
 function Dashboard({ period, shiftMonth, income, expense, balance, savingRate, byCat, byPerson, monthly, data, setView, setDetail, me, onSwitchUser, scope, setScope }) {
-  const isAdmin = me === (data.admin || 'เก๋');
+  const isAdmin = me === (data.admin || 'Kea');
   return (
     <div className="screen px-4 pt-5">
       <div className="flex items-center justify-between mb-3">
@@ -884,7 +884,7 @@ function TxDetailSheet({ t, data, onClose, removeTx, onEdit, canEdit }) {
 
       {!canEdit ? (
         <div className="rounded-xl p-3 flex items-center gap-2 text-sm" style={{ background: T.faint, color: T.sub }}>
-          <Lock size={16} /> รายการนี้แก้ได้เฉพาะ {t.who} หรือแอดมิน ({data.admin || 'เก๋'})
+          <Lock size={16} /> รายการนี้แก้ได้เฉพาะ {t.who} หรือแอดมิน ({data.admin || 'Kea'})
         </div>
       ) : !confirm ? (
         <div className="flex gap-2">
