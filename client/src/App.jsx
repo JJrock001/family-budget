@@ -1261,7 +1261,7 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser,
 
           <Section title="ข้อมูล & สำรอง">
             <div className="space-y-2">
-              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv)" onClick={onImport} />
+              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv, .pdf)" onClick={onImport} />
               <ActionRow icon={Download} label="ส่งออกเป็น CSV (เปิดใน Excel/M365)" onClick={exportCSV} />
               <ActionRow icon={Download} label="สำรองข้อมูลทั้งหมด (.json)" onClick={exportJSON} />
               <ActionRow icon={Upload} label="นำเข้าข้อมูลจากไฟล์สำรอง (.json)" onClick={() => impRef.current?.click()} />
