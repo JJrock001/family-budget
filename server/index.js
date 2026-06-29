@@ -6,6 +6,7 @@ const path = require('path');
 const dataRoutes = require('./routes/data');
 const photoRoutes = require('./routes/photos');
 const scanRoutes = require('./routes/scan');
+const parseStatementRoutes = require('./routes/parseStatement');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -16,6 +17,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use('/api/family-data', dataRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/scan-receipt', scanRoutes);
+app.use('/api/parse-statement', parseStatementRoutes);
 
 // serve client build in production
 app.use(express.static(path.join(__dirname, '../client/dist')));

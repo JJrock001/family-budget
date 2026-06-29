@@ -225,6 +225,55 @@ function parseStatementCSV(text, expCats) {
   return results;
 }
 
+function parseStatementText(text, expCats) {
+  text = text.replace(/^﻿/, '');
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const rows = [];
+  let prevBalance = null;
+
+  for (const line of lines) {
+    const dateMatch = line.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (!dateMatch) continue;
+
+    const isoDate = thaiDateToISO(dateMatch[0]);
+    if (!isoDate) continue;
+
+    const afterDate = line.slice(dateMatch.index + dateMatch[0].length);
+    const numMatches = [...afterDate.matchAll(/[\d,]+\.\d{2}/g)];
+    if (numMatches.length === 0) continue;
+
+    const nums = numMatches.map(m => parseFloat(m[0].replace(/,/g, '')));
+    const balance = nums[nums.length - 1];
+
+    let amount = 0;
+    let isIncome = false;
+
+    if (prevBalance !== null) {
+      const diff = balance - prevBalance;
+      amount = Math.abs(diff);
+      isIncome = diff > 0;
+    } else if (nums.length >= 2) {
+      amount = nums[nums.length - 2];
+      const ll = line.toLowerCase();
+      isIncome = /รับ|ฝาก|deposit|credit/.test(ll);
+    }
+
+    prevBalance = balance;
+    if (amount < 0.01) continue;
+
+    const firstNumIdx = numMatches[0].index;
+    const description = afterDate.slice(0, firstNumIdx).replace(/\d{2}:\d{2}(:\d{2})?/, '').trim();
+
+    const category = guessCategory(description, expCats);
+    const id = 'imp_' + hashStr(`${isoDate}_${Math.round(amount * 100)}_${description.slice(0, 20)}`);
+
+    rows.push({ id, date: isoDate, description, amount: isIncome ? amount : -amount, category });
+  }
+
+  return rows;
+}
+
 /* ---------------- recurring auto-fill ---------------- */
 function applyRecurring(data) {
   const now = new Date();
@@ -1338,30 +1387,63 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
   const fileRef = useRef();
   const existingIds = useMemo(() => new Set(data.tx.map(t => t.id)), [data.tx]);
 
-  const handleFile = (ev) => {
+  const [parsing, setParsing] = useState(false);
+
+  const applyParsed = (parsed) => {
+    if (parsed.length === 0) { setError('ไม่พบข้อมูลในไฟล์ หรือทุกรายการมียอด 0'); return; }
+    const initSel = new Set();
+    const initCats = {};
+    parsed.forEach((r, i) => {
+      if (!existingIds.has(r.id)) initSel.add(i);
+      initCats[i] = r.category;
+    });
+    setRows(parsed);
+    setSelected(initSel);
+    setCats(initCats);
+    setStep('preview');
+  };
+
+  const handleFile = async (ev) => {
     const f = ev.target.files?.[0];
     if (!f) return;
     setError('');
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    const isPDF = f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf';
+
+    if (isPDF) {
+      setParsing(true);
       try {
-        const parsed = parseStatementCSV(e.target.result, data.expCats);
-        if (parsed.length === 0) { setError('ไม่พบข้อมูลในไฟล์ หรือทุกรายการมียอด 0'); return; }
-        setRows(parsed);
-        const initSel = new Set();
-        const initCats = {};
-        parsed.forEach((r, i) => {
-          if (!existingIds.has(r.id)) initSel.add(i);
-          initCats[i] = r.category;
+        const b64 = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = (e) => res(e.target.result.split(',')[1]);
+          r.onerror = rej;
+          r.readAsDataURL(f);
         });
-        setSelected(initSel);
-        setCats(initCats);
-        setStep('preview');
+        const resp = await fetch('/api/parse-statement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileData: b64 }),
+        });
+        if (!resp.ok) throw new Error('Server ไม่สามารถอ่าน PDF ได้');
+        const { text, error: srvErr } = await resp.json();
+        if (srvErr) throw new Error(srvErr);
+        const parsed = parseStatementText(text, data.expCats);
+        applyParsed(parsed);
       } catch (err) {
-        setError(err.message);
+        setError('อ่าน PDF ไม่สำเร็จ: ' + err.message);
+      } finally {
+        setParsing(false);
       }
-    };
-    reader.readAsText(f, 'UTF-8');
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          applyParsed(parseStatementCSV(e.target.result, data.expCats));
+        } catch (err) {
+          setError(err.message);
+        }
+      };
+      reader.readAsText(f, 'UTF-8');
+    }
   };
 
   const toggleRow = (i) => {
@@ -1405,7 +1487,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
 
       {step === 'upload' && (
         <>
-          <p className="text-sm mb-4" style={{ color: T.sub }}>รองรับ KBank · SCB · Krungthai · Bangkok Bank</p>
+          <p className="text-sm mb-4" style={{ color: T.sub }}>รองรับ KBank · SCB · Krungthai · Bangkok Bank · ไฟล์ .csv หรือ .pdf</p>
 
           <div className="mb-4">
             <p className="text-xs font-medium mb-2" style={{ color: T.sub }}>Statement ของใคร?</p>
@@ -1414,21 +1496,21 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
             </div>
           </div>
 
-          <button onClick={() => fileRef.current?.click()}
+          <button onClick={() => fileRef.current?.click()} disabled={parsing}
             className="w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2"
-            style={{ background: T.brand, color: '#fff' }}>
-            <Upload size={20} /> เลือกไฟล์ CSV
+            style={{ background: parsing ? T.line : T.brand, color: '#fff' }}>
+            {parsing ? <><Loader2 size={20} className="animate-spin" /> กำลังอ่าน PDF…</> : <><Upload size={20} /> เลือกไฟล์ CSV หรือ PDF</>}
           </button>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} className="hidden" />
+          <input ref={fileRef} type="file" accept=".csv,.pdf,text/csv,application/pdf" onChange={handleFile} className="hidden" />
 
           {error && <p className="text-sm mt-3 text-center rounded-xl p-2" style={{ color: T.expense, background: '#FCEBE6' }}>{error}</p>}
 
           <div className="mt-4 rounded-xl p-3 text-xs leading-relaxed" style={{ background: T.faint, color: T.sub }}>
-            <b style={{ color: T.ink }}>วิธีดาวน์โหลด Statement CSV:</b><br />
+            <b style={{ color: T.ink }}>วิธีดาวน์โหลด Statement:</b><br />
             • <b>KBank:</b> K Plus → บัญชี → ดูรายการ → ส่งออก (.csv)<br />
-            • <b>SCB:</b> SCB Easy → บัญชี → ประวัติ → Export<br />
-            • <b>Krungthai:</b> Krungthai NEXT → Statement → ดาวน์โหลด<br />
-            • <b>Bangkok Bank:</b> Bualuang mBanking → บัญชี → Statement
+            • <b>SCB:</b> SCB Easy → บัญชี → ประวัติ → Export (.pdf)<br />
+            • <b>Krungthai:</b> Krungthai NEXT → Statement → ดาวน์โหลด (.csv)<br />
+            • <b>Bangkok Bank:</b> Bualuang mBanking → บัญชี → Statement (.pdf/.csv)
           </div>
         </>
       )}
@@ -1492,7 +1574,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => { setStep('upload'); setRows([]); setSelected(new Set()); setError(''); }}
+            <button onClick={() => { setStep('upload'); setRows([]); setSelected(new Set()); setError(''); setParsing(false); }}
               className="flex-1 py-3 rounded-xl text-sm font-medium"
               style={{ background: T.faint, color: T.ink, border: `1px solid ${T.line}` }}>
               เปลี่ยนไฟล์
