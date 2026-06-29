@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { PDFParse } = require('pdf-parse');
+const pdfParse = require('pdf-parse');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -14,12 +14,6 @@ function qpdfDecrypt(inputPath, password) {
       resolve(outputPath);
     });
   });
-}
-
-async function parsePDFBuffer(buffer) {
-  const parser = new PDFParse();
-  const data = await parser.parse(buffer);
-  return data.text;
 }
 
 router.post('/', async (req, res) => {
@@ -37,15 +31,15 @@ router.post('/', async (req, res) => {
       try {
         tmpOut = await qpdfDecrypt(tmpIn, password);
         const decrypted = fs.readFileSync(tmpOut);
-        const text = await parsePDFBuffer(decrypted);
-        res.json({ text });
-      } catch (qErr) {
+        const data = await pdfParse(decrypted);
+        res.json({ text: data.text });
+      } catch {
         res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง ลองใหม่', encrypted: true, wrongPassword: true });
       }
     } else {
       try {
-        const text = await parsePDFBuffer(buffer);
-        res.json({ text });
+        const data = await pdfParse(buffer);
+        res.json({ text: data.text });
       } catch (e) {
         const msg = e.message || '';
         const isEncrypted = /password|encrypt|protected|string did not match/i.test(msg);
