@@ -32,11 +32,11 @@ const INC_ICON = {
 };
 
 const DEFAULTS = {
-  members: ['Oh','JJ','Jenny','Kea','ส่วนกลาง'],
+  members: ['Oh','JJ','Jenny','Kea','admin','ส่วนกลาง'],
   expCats: ['อาหาร & เครื่องดื่ม','ของใช้ในบ้าน','สาธารณูปโภค (น้ำ/ไฟ/แก๊ส)','อินเทอร์เน็ต/มือถือ','เดินทาง/น้ำมัน','รถยนต์ (ผ่อน/ซ่อม/ประกัน)','การศึกษา','สุขภาพ/รักษาพยาบาล','ช้อปปิ้ง/เสื้อผ้า','สังสรรค์/บันเทิง/ท่องเที่ยว','ผ่อน/หนี้/ประกัน','บริจาค/ทำบุญ','อื่น ๆ'],
   incCats: ['เงินเดือน','โบนัส','รายได้ธุรกิจ/SMI','ดอกเบี้ย/เงินปันผล','ค่าเช่า','รายได้อื่น ๆ'],
   pays: ['เงินสด','โอน/PromptPay','บัตรเครดิต','บัตรเดบิต','e-Wallet'],
-  admin: 'Kea',
+  admin: 'admin',
   budgets: {},
   recurring: [
     { id:'rec_o',  type:'income', who:'Oh',    category:'เงินเดือน', merchant:'เงินเดือน', amount:78390,    pay:'', note:'', dayOfMonth:1 },
@@ -500,9 +500,11 @@ export default function App() {
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 1800); };
   const pickMe = (name) => { setMe(name); meSet(name); };
 
-  const admin = data.admin || 'Kea';
+  const admin = data.admin || 'admin';
   const isAdmin = me === admin;
   const canEditTx = (t) => isAdmin || me === t.who;
+  // members who can own transactions (exclude admin role account)
+  const txMembers = data.members.filter(m => m !== admin);
   const inScope = (t) => scope === 'all' || t.who === me;
 
   const inPeriod = (t) => { const d = new Date(t.date + 'T00:00:00'); return d.getFullYear() === period.y && d.getMonth() === period.m; };
@@ -550,6 +552,13 @@ export default function App() {
     setDetail(null);
     flash('ลบแล้ว');
   };
+  const removeManyTx = async (ids) => {
+    const idSet = new Set(ids);
+    const toRemove = data.tx.filter(t => idSet.has(t.id));
+    update({ ...data, tx: data.tx.filter(t => !idSet.has(t.id)) });
+    for (const tx of toRemove) if (tx.hasPhoto) await deletePhoto(tx.id);
+    flash(`ลบ ${ids.length} รายการแล้ว`);
+  };
 
   const [showImport, setShowImport] = useState(false);
   const importTx = (txList) => {
@@ -583,8 +592,8 @@ export default function App() {
 
       <div className="mx-auto" style={{ maxWidth: 440, paddingBottom: 92 }}>
         {view === 'dashboard' && <Dashboard {...{ period, shiftMonth, income, expense, balance, savingRate, byCat, byPerson, monthly, periodTx, data, setView, setDetail, me, onSwitchUser: () => setMe(null), scope, setScope }} />}
-        {view === 'add' && <AddScreen {...{ data, saveTx, setView, editing, me, clearEdit: () => setEditing(null), defaultDate: period.y === now.getFullYear() ? today() : `${period.y}-${String(period.m + 1).padStart(2, '0')}-01` }} />}
-        {view === 'list' && <ListScreen {...{ data, period, shiftMonth, setDetail, me, scope, setScope }} />}
+        {view === 'add' && <AddScreen {...{ data, saveTx, setView, editing, me, clearEdit: () => setEditing(null), defaultDate: period.y === now.getFullYear() ? today() : `${period.y}-${String(period.m + 1).padStart(2, '0')}-01`, txMembers }} />}
+        {view === 'list' && <ListScreen {...{ data, period, shiftMonth, setDetail, me, scope, setScope, removeManyTx }} />}
         {view === 'settings' && <SettingsScreen {...{ data, update, flash, me, admin, isAdmin, onSwitchUser: () => setMe(null), onImport: () => setShowImport(true) }} />}
       </div>
 
@@ -600,7 +609,7 @@ export default function App() {
         </div>
       </nav>
 
-      {showImport && <StatementImportSheet data={data} importTx={importTx} me={me} onClose={() => setShowImport(false)} />}
+      {showImport && <StatementImportSheet data={data} importTx={importTx} me={me} txMembers={txMembers} onClose={() => setShowImport(false)} />}
 
       {detail && detail._catFilter && <CategorySheet name={detail._catFilter} data={data} onClose={() => setDetail(null)} />}
       {detail && !detail._catFilter && (
@@ -628,9 +637,11 @@ function NavBtn({ icon: Icon, label, active, onClick }) {
   );
 }
 
+const AV = ['#0F5C54', '#C99A2E', '#C2410C', '#3F6F8F', '#5B8C5A', '#7C6A9C', '#B5654A', '#4E8D8A'];
+const memberColor = (members, name) => AV[members.indexOf(name) % AV.length] || AV[0];
+
 /* ---------------- Identity picker ---------------- */
 function IdentityPicker({ members, admin, onPick }) {
-  const AV = ['#0F5C54', '#C99A2E', '#C2410C', '#3F6F8F', '#5B8C5A', '#7C6A9C', '#B5654A', '#4E8D8A'];
   return (
     <div style={{ minHeight: '100vh', fontFamily: 'IBM Plex Sans Thai, sans-serif', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: 'linear-gradient(165deg, #11635A 0%, #0C4742 52%, #0A3531 100%)' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap');
@@ -686,7 +697,7 @@ function Dashboard({ period, shiftMonth, income, expense, balance, savingRate, b
           <h1 className="text-xl font-bold" style={{ fontFamily: 'Kanit, sans-serif', color: T.ink }}>{me}</h1>
         </div>
         <button onClick={onSwitchUser} className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full active:scale-95 transition-transform" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
-          <span className="flex items-center justify-center rounded-full font-semibold" style={{ width: 30, height: 30, background: isAdmin ? T.brand : T.faint, color: isAdmin ? '#fff' : T.ink, fontFamily: 'Kanit, sans-serif', fontSize: 14 }}>{me.slice(0, 1)}</span>
+          <span className="flex items-center justify-center rounded-full font-semibold" style={{ width: 30, height: 30, background: memberColor(data.members, me), color: '#fff', fontFamily: 'Kanit, sans-serif', fontSize: 14 }}>{me.slice(0, 1)}</span>
           {isAdmin && <Crown size={13} color={T.gold} />}
           <ChevronRight size={15} color={T.sub} />
         </button>
@@ -833,12 +844,13 @@ function Empty({ text }) {
 }
 
 /* ---------------- Add / Edit ---------------- */
-function AddScreen({ data, saveTx, setView, editing, clearEdit, defaultDate, me }) {
+function AddScreen({ data, saveTx, setView, editing, clearEdit, defaultDate, me, txMembers }) {
+  const members = txMembers || data.members;
   const e = editing;
   const [type, setType] = useState(e ? e.type : 'expense');
   const [amount, setAmount] = useState(e ? String(e.amount) : '');
   const [date, setDate] = useState(e ? e.date : defaultDate);
-  const [who, setWho] = useState(e ? e.who : (me && data.members.includes(me) ? me : data.members[0]));
+  const [who, setWho] = useState(e ? e.who : (me && members.includes(me) ? me : members[0]));
   const [category, setCategory] = useState(e ? e.category : '');
   const [merchant, setMerchant] = useState(e ? e.merchant : '');
   const [pay, setPay] = useState(e ? e.pay : data.pays[1]);
@@ -1010,7 +1022,7 @@ function AddScreen({ data, saveTx, setView, editing, clearEdit, defaultDate, me 
       </Field>
 
       <Field label={type === 'expense' ? 'ผู้จ่าย' : 'ผู้รับ'}>
-        <div className="flex flex-wrap gap-2">{data.members.map(m => <Chip key={m} active={who === m} onClick={() => setWho(m)}>{m}</Chip>)}</div>
+        <div className="flex flex-wrap gap-2">{members.map(m => <Chip key={m} active={who === m} onClick={() => setWho(m)}>{m}</Chip>)}</div>
       </Field>
 
       <Field label="หมวด">
@@ -1063,8 +1075,12 @@ function Field({ label, children }) {
 }
 
 /* ---------------- List ---------------- */
-function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope }) {
+function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope, removeManyTx }) {
   const [typeF, setTypeF] = useState('all');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [confirmDel, setConfirmDel] = useState(false);
+
   const rows = useMemo(() => {
     return data.tx.filter(t => { const d = new Date(t.date + 'T00:00:00'); return d.getFullYear() === period.y && d.getMonth() === period.m; })
       .filter(t => scope === 'all' ? true : t.who === me)
@@ -1072,14 +1088,33 @@ function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope }
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [data.tx, period, typeF, scope, me]);
 
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); setConfirmDel(false); };
+  const toggleOne = (id) => setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const allSelected = rows.length > 0 && rows.every(r => selected.has(r.id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map(r => r.id)));
+
+  const doDelete = async () => {
+    await removeManyTx([...selected]);
+    exitSelect();
+  };
+
   return (
     <div className="screen px-4 pt-5">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold" style={{ fontFamily: 'Kanit, sans-serif' }}>รายการ</h1>
-        <div className="flex items-center gap-1 rounded-full px-1 py-1" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
-          <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronLeft size={18} color={T.sub} /></button>
-          <span className="text-sm font-semibold px-1" style={{ minWidth: 90, textAlign: 'center', fontFamily: 'Kanit, sans-serif' }}>{TH_FULL[period.m]} {period.y}</span>
-          <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronRight size={18} color={T.sub} /></button>
+        <div className="flex items-center gap-2">
+          {!selectMode ? (
+            <>
+              <button onClick={() => setSelectMode(true)} className="p-1.5 rounded-full active:bg-gray-100" title="เลือกลบ"><Trash2 size={18} color={T.sub} /></button>
+              <div className="flex items-center gap-1 rounded-full px-1 py-1" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+                <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronLeft size={18} color={T.sub} /></button>
+                <span className="text-sm font-semibold px-1" style={{ minWidth: 90, textAlign: 'center', fontFamily: 'Kanit, sans-serif' }}>{TH_FULL[period.m]} {period.y}</span>
+                <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronRight size={18} color={T.sub} /></button>
+              </div>
+            </>
+          ) : (
+            <button onClick={exitSelect} className="text-sm px-3 py-1.5 rounded-full" style={{ background: T.surface, border: `1px solid ${T.line}`, color: T.sub }}>ยกเลิก</button>
+          )}
         </div>
       </div>
 
@@ -1089,16 +1124,39 @@ function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope }
         {[['all', 'ทั้งหมด'], ['expense', 'รายจ่าย'], ['income', 'รายรับ']].map(([v, l]) => <Chip key={v} active={typeF === v} onClick={() => setTypeF(v)}>{l}</Chip>)}
       </div>
 
+      {selectMode && rows.length > 0 && (
+        <div className="flex items-center justify-between mb-2 px-1">
+          <button onClick={toggleAll} className="text-sm flex items-center gap-1.5" style={{ color: T.brand }}>
+            <span style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${allSelected ? T.brand : T.line}`, background: allSelected ? T.brand : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {allSelected && <Check size={13} color="#fff" strokeWidth={3} />}
+            </span>
+            เลือกทั้งหมด
+          </button>
+          <span className="text-xs" style={{ color: T.sub }}>เลือกแล้ว {selected.size} รายการ</span>
+        </div>
+      )}
+
       {rows.length === 0 ? <Empty text="ยังไม่มีรายการในเดือนนี้" /> : (
         <div className="space-y-2">
           {rows.map(t => {
             const exp = t.type === 'expense'; const Ic = (exp ? EXP_ICON : INC_ICON)[t.category] || MoreHorizontal;
             const col = exp ? catColor(data.expCats, t.category) : T.income;
+            const isSel = selected.has(t.id);
             return (
-              <button key={t.id} onClick={() => setDetail(t)} className="w-full flex items-center gap-3 p-3 rounded-2xl active:opacity-70" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
-                <span style={{ width: 42, height: 42, borderRadius: 12, background: col + '1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Ic size={20} color={col} />
-                </span>
+              <button key={t.id}
+                onClick={() => selectMode ? toggleOne(t.id) : setDetail(t)}
+                className="w-full flex items-center gap-3 p-3 rounded-2xl active:opacity-70"
+                style={{ background: isSel ? T.brand + '12' : T.surface, border: `1px solid ${isSel ? T.brand : T.line}` }}>
+                {selectMode && (
+                  <span style={{ width: 22, height: 22, borderRadius: 7, border: `2px solid ${isSel ? T.brand : T.line}`, background: isSel ? T.brand : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {isSel && <Check size={13} color="#fff" strokeWidth={3} />}
+                  </span>
+                )}
+                {!selectMode && (
+                  <span style={{ width: 42, height: 42, borderRadius: 12, background: col + '1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Ic size={20} color={col} />
+                  </span>
+                )}
                 <div className="flex-1 text-left min-w-0">
                   <p className="text-sm font-medium truncate" style={{ color: T.ink }}>{t.merchant || t.category}</p>
                   <p className="text-xs truncate" style={{ color: T.sub }}>{t.who} · {fmtDate(t.date)}{exp && t.pay ? ' · ' + t.pay : ''}</p>
@@ -1110,6 +1168,27 @@ function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope }
               </button>
             );
           })}
+        </div>
+      )}
+
+      {selectMode && selected.size > 0 && !confirmDel && (
+        <div className="fixed bottom-24 left-0 right-0 flex justify-center px-4 z-30">
+          <button onClick={() => setConfirmDel(true)}
+            className="w-full py-3 rounded-2xl font-semibold text-white flex items-center justify-center gap-2 shadow-lg"
+            style={{ maxWidth: 440, background: T.expense }}>
+            <Trash2 size={18} /> ลบ {selected.size} รายการ
+          </button>
+        </div>
+      )}
+
+      {confirmDel && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
+          <div className="w-full rounded-t-3xl p-6 space-y-3" style={{ maxWidth: 440, background: '#fff' }}>
+            <p className="text-base font-semibold text-center">ลบ {selected.size} รายการ?</p>
+            <p className="text-sm text-center" style={{ color: T.sub }}>กู้คืนไม่ได้</p>
+            <button onClick={doDelete} className="w-full py-3 rounded-2xl font-semibold text-white" style={{ background: T.expense }}>ลบเลย</button>
+            <button onClick={() => setConfirmDel(false)} className="w-full py-3 rounded-2xl font-semibold" style={{ background: T.surface, color: T.ink }}>ยกเลิก</button>
+          </div>
         </div>
       )}
     </div>
@@ -1232,7 +1311,7 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser,
 
       <Section title="ผู้ใช้งาน">
         <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center rounded-full font-semibold" style={{ width: 44, height: 44, background: isAdmin ? T.brand : T.faint, color: isAdmin ? '#fff' : T.ink, fontFamily: 'Kanit, sans-serif', fontSize: 18 }}>{me.slice(0, 1)}</span>
+          <span className="flex items-center justify-center rounded-full font-semibold" style={{ width: 44, height: 44, background: memberColor(data.members, me), color: '#fff', fontFamily: 'Kanit, sans-serif', fontSize: 18 }}>{me.slice(0, 1)}</span>
           <div className="flex-1">
             <p className="font-semibold" style={{ color: T.ink }}>{me}</p>
             <p className="text-xs flex items-center gap-1" style={{ color: isAdmin ? '#9A6A00' : T.sub }}>
@@ -1395,8 +1474,9 @@ function BudgetSettings({ data, update }) {
 
 /* ---------------- Recurring Settings ---------------- */
 function RecurringSettings({ data, update }) {
+  const txMembers = data.members.filter(m => m !== (data.admin || 'admin'));
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ type: 'income', who: data.members[0] || '', category: '', merchant: '', amount: '', dayOfMonth: '1' });
+  const [form, setForm] = useState({ type: 'income', who: txMembers[0] || '', category: '', merchant: '', amount: '', dayOfMonth: '1' });
   const recurring = data.recurring || [];
   const cats = form.type === 'expense' ? data.expCats : data.incCats;
 
@@ -1456,7 +1536,7 @@ function RecurringSettings({ data, update }) {
             ))}
           </div>
           <select value={form.who} onChange={e => setForm(f => ({...f, who:e.target.value}))} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }}>
-            {data.members.map(m => <option key={m} value={m}>{m}</option>)}
+            {txMembers.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
           <select value={form.category} onChange={e => setForm(f => ({...f, category:e.target.value}))} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }}>
             <option value="">เลือกหมวด</option>
@@ -1482,9 +1562,10 @@ function RecurringSettings({ data, update }) {
 }
 
 /* ---------------- Statement Import Sheet ---------------- */
-function StatementImportSheet({ data, importTx, me, onClose }) {
+function StatementImportSheet({ data, importTx, me, txMembers, onClose }) {
+  const members = txMembers || data.members;
   const [step, setStep] = useState('upload');
-  const [who, setWho] = useState(me);
+  const [who, setWho] = useState(members.includes(me) ? me : members[0]);
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [cats, setCats] = useState({});
@@ -1494,7 +1575,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
 
   const [parsing, setParsing] = useState(false);
   const [needPassword, setNeedPassword] = useState(false);
-  const [pdfB64, setPdfB64] = useState('');
+  const [pendingPDFs, setPendingPDFs] = useState([]); // [{b64, name}] waiting for password
   const [pdfPassword, setPdfPassword] = useState('');
 
   const applyParsed = (parsed) => {
@@ -1511,26 +1592,79 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
     setStep('preview');
   };
 
-  const parsePDF = async (b64, password = '') => {
+  const fetchPDFText = async (b64, password = '') => {
+    const resp = await fetch('/api/parse-statement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileData: b64, password }),
+    });
+    return resp.json();
+  };
+
+  const handleFiles = async (files) => {
+    if (!files.length) return;
+    setError(''); setNeedPassword(false); setPdfPassword(''); setPendingPDFs([]);
     setParsing(true);
-    setError('');
+    const allParsed = [];
+    const encrypted = [];
     try {
-      const resp = await fetch('/api/parse-statement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileData: b64, password }),
-      });
-      const json = await resp.json();
-      if (json.encrypted) {
-        setNeedPassword(true);
-        setPdfB64(b64);
-        if (json.wrongPassword) setError('รหัสผ่านไม่ถูกต้อง ลองใหม่อีกครั้ง');
-        return;
+      for (const f of files) {
+        const isPDF = f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf';
+        if (isPDF) {
+          const b64 = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = (e) => res(e.target.result.split(',')[1]);
+            r.onerror = rej;
+            r.readAsDataURL(f);
+          });
+          const json = await fetchPDFText(b64);
+          if (json.encrypted) { encrypted.push({ b64, name: f.name }); continue; }
+          if (json.error) { setError(`${f.name}: ${json.error}`); continue; }
+          allParsed.push(...parseStatementText(json.text, data.expCats, data.incCats));
+        } else {
+          const text = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = (e) => res(e.target.result);
+            r.onerror = rej;
+            r.readAsText(f, 'UTF-8');
+          });
+          allParsed.push(...parseStatementCSV(text, data.expCats));
+        }
       }
-      if (json.error) throw new Error(json.error);
-      const parsed = parseStatementText(json.text, data.expCats, data.incCats);
-      setNeedPassword(false);
-      applyParsed(parsed);
+      if (encrypted.length > 0) {
+        setPendingPDFs(encrypted);
+        setNeedPassword(true);
+        if (allParsed.length > 0) {
+          // Show partial results while waiting for password
+          applyParsed(allParsed);
+        } else {
+          setError('');
+        }
+      } else if (allParsed.length > 0) {
+        applyParsed(allParsed);
+      } else {
+        setError('ไม่พบข้อมูลในไฟล์ หรือทุกรายการมียอด 0');
+      }
+    } catch (err) {
+      setError('อ่านไฟล์ไม่สำเร็จ: ' + err.message);
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const submitPassword = async () => {
+    if (!pendingPDFs.length || !pdfPassword) return;
+    setParsing(true); setError('');
+    const allParsed = [...rows]; // keep already-parsed rows
+    try {
+      for (const { b64, name } of pendingPDFs) {
+        const json = await fetchPDFText(b64, pdfPassword);
+        if (json.wrongPassword) { setError('รหัสผ่านไม่ถูกต้อง ลองใหม่อีกครั้ง'); return; }
+        if (json.error) { setError(`${name}: ${json.error}`); return; }
+        allParsed.push(...parseStatementText(json.text, data.expCats, data.incCats));
+      }
+      setNeedPassword(false); setPendingPDFs([]);
+      applyParsed(allParsed);
     } catch (err) {
       setError('อ่าน PDF ไม่สำเร็จ: ' + err.message);
     } finally {
@@ -1538,27 +1672,10 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
     }
   };
 
-  const handleFile = async (ev) => {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    setError(''); setNeedPassword(false); setPdfPassword('');
-    const isPDF = f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf';
-    if (isPDF) {
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = (e) => res(e.target.result.split(',')[1]);
-        r.onerror = rej;
-        r.readAsDataURL(f);
-      });
-      await parsePDF(b64);
-    } else {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try { applyParsed(parseStatementCSV(e.target.result, data.expCats)); }
-        catch (err) { setError(err.message); }
-      };
-      reader.readAsText(f, 'UTF-8');
-    }
+  const handleFile = (ev) => {
+    const files = [...(ev.target.files || [])];
+    ev.target.value = '';
+    handleFiles(files);
   };
 
   const toggleRow = (i) => {
@@ -1607,20 +1724,20 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
           <div className="mb-4">
             <p className="text-xs font-medium mb-2" style={{ color: T.sub }}>Statement ของใคร?</p>
             <div className="flex flex-wrap gap-2">
-              {data.members.map(m => <Chip key={m} active={who === m} onClick={() => setWho(m)}>{m}</Chip>)}
+              {members.map(m => <Chip key={m} active={who === m} onClick={() => setWho(m)}>{m}</Chip>)}
             </div>
           </div>
 
           <button onClick={() => fileRef.current?.click()} disabled={parsing}
             className="w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2"
             style={{ background: parsing ? T.line : T.brand, color: '#fff' }}>
-            {parsing ? <><Loader2 size={20} className="animate-spin" /> กำลังอ่าน PDF…</> : <><Upload size={20} /> เลือกไฟล์ CSV หรือ PDF</>}
+            {parsing ? <><Loader2 size={20} className="animate-spin" /> กำลังอ่าน…</> : <><Upload size={20} /> เลือกไฟล์ (เลือกหลายไฟล์ได้)</>}
           </button>
-          <input ref={fileRef} type="file" accept=".csv,.pdf,text/csv,application/pdf" onChange={handleFile} className="hidden" />
+          <input ref={fileRef} type="file" accept=".csv,.pdf,text/csv,application/pdf" multiple onChange={handleFile} className="hidden" />
 
           {needPassword && (
             <div className="mt-3 rounded-xl p-3 space-y-2" style={{ background: '#FFF8EC', border: `1px solid ${T.goldSoft}` }}>
-              <p className="text-sm font-medium" style={{ color: '#7A5C16' }}>🔒 PDF นี้ถูกล็อกด้วยรหัสผ่าน</p>
+              <p className="text-sm font-medium" style={{ color: '#7A5C16' }}>🔒 PDF ถูกล็อกด้วยรหัสผ่าน ({pendingPDFs.map(f => f.name).join(', ')})</p>
               <p className="text-xs" style={{ color: '#7A5C16' }}>
                 SCB: วันเกิด <b>DDMMYYYY</b> (เช่น 15051990) หรือเลขบัญชี 10 หลักสุดท้าย
               </p>
@@ -1629,12 +1746,12 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
                   type="password"
                   value={pdfPassword}
                   onChange={e => setPdfPassword(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && parsePDF(pdfB64, pdfPassword)}
+                  onKeyDown={e => e.key === 'Enter' && submitPassword()}
                   placeholder="กรอกรหัสผ่าน PDF"
                   className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
                   style={{ border: `1px solid ${T.goldSoft}`, background: '#fff' }}
                 />
-                <button onClick={() => parsePDF(pdfB64, pdfPassword)} disabled={parsing || !pdfPassword}
+                <button onClick={submitPassword} disabled={parsing || !pdfPassword}
                   className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
                   style={{ background: pdfPassword ? T.brand : T.line }}>
                   {parsing ? '…' : 'ลอง'}
