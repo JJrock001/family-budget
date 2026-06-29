@@ -191,7 +191,7 @@ function Section({ title, children, right }) {
 function ScopeToggle({ scope, setScope, me }) {
   return (
     <div className="flex p-1 rounded-full" style={{ background: T.faint, border: `1px solid ${T.line}` }}>
-      {[['me', `ของ${me}`], ['all', 'ทั้งครอบครัว']].map(([v, l]) => (
+      {[['me', `ของ ${me}`], ['all', 'ทั้งครอบครัว']].map(([v, l]) => (
         <button key={v} onClick={() => setScope(v)} className="flex-1 py-2 rounded-full text-sm font-semibold transition-colors"
           style={{ background: scope === v ? T.brand : 'transparent', color: scope === v ? '#fff' : T.sub }}>
           {l}
