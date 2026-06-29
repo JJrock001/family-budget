@@ -139,10 +139,11 @@ function splitCSVLine(line) {
 function thaiDateToISO(str) {
   str = (str || '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (m) {
     let [, d, mo, y] = m;
-    if (parseInt(y) > 2400) y = String(parseInt(y) - 543);
+    if (y.length <= 2) y = '20' + y.padStart(2, '0');       // DD/MM/YY → 20xx
+    else if (parseInt(y) > 2400) y = String(parseInt(y) - 543); // B.E. → C.E.
     return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
   }
   return null;
@@ -161,16 +162,24 @@ function hashStr(s) {
 
 function guessCategory(desc, expCats) {
   const d = desc.toLowerCase();
-  if (/อาหาร|food|restaurant|coffee|cafe|7-11|eleven|lotus|tops|villa|makro|big c|gourmet|ร้านอาหาร|foodpanda|grab food|lineman/.test(d)) return 'อาหาร & เครื่องดื่ม';
+  if (/อาหาร|food|restaurant|coffee|cafe|starbuck|7-11|eleven|lotus|tops|villa|makro|big c|gourmet|ร้านอาหาร|foodpanda|grab food|lineman|the cook|mk |เอ็มเค/.test(d)) return 'อาหาร & เครื่องดื่ม';
   if (/น้ำมัน|ptt|shell|caltex|esso|bangchak|บางจาก|pt gas/.test(d)) return 'เดินทาง/น้ำมัน';
-  if (/grab|uber|bolt|taxi|bts|mrt|airport|สนามบิน/.test(d)) return 'เดินทาง/น้ำมัน';
-  if (/ไฟฟ้า|ประปา|electric|pea |mea |pwa |water bill|แก๊ส/.test(d)) return 'สาธารณูปโภค (น้ำ/ไฟ/แก๊ส)';
-  if (/dtac|ais|true move|nt |internet|wifi|โทรศัพท์/.test(d)) return 'อินเทอร์เน็ต/มือถือ';
+  if (/grab|uber|bolt|taxi|bts|mrt|รฟม|รฟท|airport|สนามบิน|ค่าจอดรถ/.test(d)) return 'เดินทาง/น้ำมัน';
+  if (/ไฟฟ้า|ประปา|electric|pea |mea |pwa |water bill|แก๊ส|scbenergy/.test(d)) return 'สาธารณูปโภค (น้ำ/ไฟ/แก๊ส)';
+  if (/dtac|ais|true move|nt |internet|wifi|โทรศัพท์|truemoney/.test(d)) return 'อินเทอร์เน็ต/มือถือ';
   if (/โรงพยาบาล|hospital|clinic|คลินิก|pharmacy|dental|dentist/.test(d)) return 'สุขภาพ/รักษาพยาบาล';
   if (/school|โรงเรียน|มหาวิทยาลัย|university|tutor/.test(d)) return 'การศึกษา';
   if (/insurance|ประกัน/.test(d)) return 'ผ่อน/หนี้/ประกัน';
   if (/toyota|honda|isuzu|mazda|bmw|mercedes|car service|ซ่อมรถ/.test(d)) return 'รถยนต์ (ผ่อน/ซ่อม/ประกัน)';
   return expCats.includes('อื่น ๆ') ? 'อื่น ๆ' : (expCats[expCats.length - 1] || '');
+}
+
+function guessCategoryIncome(desc, incCats) {
+  const d = desc.toLowerCase();
+  if (/เงินเดือน|salary|payroll|smi|บจก/.test(d)) return 'เงินเดือน';
+  if (/โบนัส|bonus/.test(d)) return 'โบนัส';
+  if (/ดอกเบี้ย|interest|dividend|ปันผล/.test(d)) return 'ดอกเบี้ย/เงินปันผล';
+  return incCats.includes('รายได้อื่น ๆ') ? 'รายได้อื่น ๆ' : (incCats[incCats.length - 1] || 'รายได้อื่น ๆ');
 }
 
 function parseStatementCSV(text, expCats) {
@@ -225,17 +234,70 @@ function parseStatementCSV(text, expCats) {
   return results;
 }
 
-function parseStatementText(text, expCats) {
+function parseStatementText(text, expCats, incCats = []) {
   text = text.replace(/^﻿/, '');
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-
   const rows = [];
+
+  // --- SCB format: DD/MM/YY HH:MM X1|X2 CODE Amount Balance (description on next line)
+  const SCB_LINE = /^(\d{2})\/(\d{2})\/(\d{2,4})/;
+  const hasX1X2 = lines.some(l => /X1|X2/.test(l));
+
+  if (hasX1X2) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!SCB_LINE.test(line)) continue;
+      if (!/X1|X2/.test(line)) continue;           // skip non-transaction date lines
+
+      // Parse date
+      const dm = line.match(/^(\d{2})\/(\d{2})\/(\d{2,4})/);
+      let [, d, mo, y] = dm;
+      if (y.length <= 2) y = '20' + y;
+      else if (parseInt(y) > 2400) y = String(parseInt(y) - 543);
+      const isoDate = `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+
+      const isIncome = /X1/.test(line);
+
+      // Transaction code (ENET, BCMS, ATS, OEFS …)
+      const codeMatch = line.match(/X[12]([A-Z]{2,8})/);
+      const code = codeMatch ? codeMatch[1] : '';
+
+      // Numbers on this line → second-to-last = amount, last = balance
+      const nums = [...line.matchAll(/[\d,]+\.\d{2}/g)].map(m => parseFloat(m[0].replace(/,/g, '')));
+      if (nums.length < 2) continue;
+      const amount = nums[nums.length - 2];
+      if (amount < 0.01) continue;
+
+      // Description is next non-transaction line
+      let description = code;
+      const next = lines[i + 1] || '';
+      if (next && !SCB_LINE.test(next) && !next.match(/^X[12]/)) {
+        description = next;
+        i++;
+      }
+
+      // Pay method from code
+      const pay = /ENET|RTGS|ATS|QR|TRAN/.test(code) ? 'โอน/PromptPay'
+                : /ATM/.test(code) ? 'เงินสด'
+                : /BCMS|DEBIT|VISA|MAST/.test(code) ? 'บัตรเดบิต'
+                : 'โอน/PromptPay';
+
+      const category = isIncome
+        ? guessCategoryIncome(description, incCats)
+        : guessCategory(description, expCats);
+
+      const id = 'imp_' + hashStr(`${isoDate}_${Math.round(amount * 100)}_${description.slice(0, 20)}`);
+      rows.push({ id, date: isoDate, description: description.trim(), amount: isIncome ? amount : -amount, category, pay });
+    }
+    return rows;
+  }
+
+  // --- Generic balance-diff fallback for other banks
   let prevBalance = null;
-
-  for (const line of lines) {
-    const dateMatch = line.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const dateMatch = line.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
     if (!dateMatch) continue;
-
     const isoDate = thaiDateToISO(dateMatch[0]);
     if (!isoDate) continue;
 
@@ -245,9 +307,7 @@ function parseStatementText(text, expCats) {
 
     const nums = numMatches.map(m => parseFloat(m[0].replace(/,/g, '')));
     const balance = nums[nums.length - 1];
-
-    let amount = 0;
-    let isIncome = false;
+    let amount = 0, isIncome = false;
 
     if (prevBalance !== null) {
       const diff = balance - prevBalance;
@@ -255,22 +315,17 @@ function parseStatementText(text, expCats) {
       isIncome = diff > 0;
     } else if (nums.length >= 2) {
       amount = nums[nums.length - 2];
-      const ll = line.toLowerCase();
-      isIncome = /รับ|ฝาก|deposit|credit/.test(ll);
+      isIncome = /รับ|ฝาก|deposit|credit/.test(line.toLowerCase());
     }
-
     prevBalance = balance;
     if (amount < 0.01) continue;
 
     const firstNumIdx = numMatches[0].index;
     const description = afterDate.slice(0, firstNumIdx).replace(/\d{2}:\d{2}(:\d{2})?/, '').trim();
-
-    const category = guessCategory(description, expCats);
+    const category = isIncome ? guessCategoryIncome(description, incCats) : guessCategory(description, expCats);
     const id = 'imp_' + hashStr(`${isoDate}_${Math.round(amount * 100)}_${description.slice(0, 20)}`);
-
     rows.push({ id, date: isoDate, description, amount: isIncome ? amount : -amount, category });
   }
-
   return rows;
 }
 
@@ -1423,7 +1478,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
         return;
       }
       if (json.error) throw new Error(json.error);
-      const parsed = parseStatementText(json.text, data.expCats);
+      const parsed = parseStatementText(json.text, data.expCats, data.incCats);
       setNeedPassword(false);
       applyParsed(parsed);
     } catch (err) {
@@ -1477,7 +1532,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
         category: cats[i] || r.category,
         merchant: r.description || (r.amount > 0 ? 'รายรับ' : 'รายจ่าย'),
         amount: Math.abs(r.amount),
-        pay: r.amount < 0 ? 'โอน/PromptPay' : '',
+        pay: r.pay || (r.amount < 0 ? 'โอน/PromptPay' : ''),
         note: 'นำเข้าจาก Statement',
         hasPhoto: false,
       });
