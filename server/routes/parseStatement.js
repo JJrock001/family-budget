@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -16,6 +16,12 @@ function qpdfDecrypt(inputPath, password) {
   });
 }
 
+async function parsePDFBuffer(buffer) {
+  const parser = new PDFParse();
+  const data = await parser.parse(buffer);
+  return data.text;
+}
+
 router.post('/', async (req, res) => {
   const { fileData, password } = req.body;
   if (!fileData) return res.status(400).json({ error: 'No file data' });
@@ -26,24 +32,20 @@ router.post('/', async (req, res) => {
     const buffer = Buffer.from(fileData, 'base64');
 
     if (password) {
-      // Write encrypted PDF to temp file, decrypt via qpdf, then parse
       tmpIn = path.join(os.tmpdir(), `enc_${Date.now()}.pdf`);
       fs.writeFileSync(tmpIn, buffer);
       try {
         tmpOut = await qpdfDecrypt(tmpIn, password);
         const decrypted = fs.readFileSync(tmpOut);
-        const data = await pdfParse(decrypted);
-        res.json({ text: data.text });
+        const text = await parsePDFBuffer(decrypted);
+        res.json({ text });
       } catch (qErr) {
-        const msg = qErr.message || '';
-        const wrongPw = /incorrect password|bad password|invalid password/i.test(msg) || qErr.code !== 0;
-        res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง ลองใหม่', encrypted: true, wrongPassword: wrongPw });
+        res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง ลองใหม่', encrypted: true, wrongPassword: true });
       }
     } else {
-      // No password — try direct parse, detect if encrypted
       try {
-        const data = await pdfParse(buffer);
-        res.json({ text: data.text });
+        const text = await parsePDFBuffer(buffer);
+        res.json({ text });
       } catch (e) {
         const msg = e.message || '';
         const isEncrypted = /password|encrypt|protected|string did not match/i.test(msg);
