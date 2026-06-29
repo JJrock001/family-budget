@@ -1388,6 +1388,9 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
   const existingIds = useMemo(() => new Set(data.tx.map(t => t.id)), [data.tx]);
 
   const [parsing, setParsing] = useState(false);
+  const [needPassword, setNeedPassword] = useState(false);
+  const [pdfB64, setPdfB64] = useState('');
+  const [pdfPassword, setPdfPassword] = useState('');
 
   const applyParsed = (parsed) => {
     if (parsed.length === 0) { setError('ไม่พบข้อมูลในไฟล์ หรือทุกรายการมียอด 0'); return; }
@@ -1403,44 +1406,46 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
     setStep('preview');
   };
 
+  const parsePDF = async (b64, password = '') => {
+    setParsing(true);
+    setError('');
+    try {
+      const resp = await fetch('/api/parse-statement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileData: b64, password }),
+      });
+      const json = await resp.json();
+      if (json.encrypted) { setNeedPassword(true); setPdfB64(b64); return; }
+      if (json.error) throw new Error(json.error);
+      const parsed = parseStatementText(json.text, data.expCats);
+      setNeedPassword(false);
+      applyParsed(parsed);
+    } catch (err) {
+      setError('อ่าน PDF ไม่สำเร็จ: ' + err.message);
+    } finally {
+      setParsing(false);
+    }
+  };
+
   const handleFile = async (ev) => {
     const f = ev.target.files?.[0];
     if (!f) return;
-    setError('');
+    setError(''); setNeedPassword(false); setPdfPassword('');
     const isPDF = f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf';
-
     if (isPDF) {
-      setParsing(true);
-      try {
-        const b64 = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload = (e) => res(e.target.result.split(',')[1]);
-          r.onerror = rej;
-          r.readAsDataURL(f);
-        });
-        const resp = await fetch('/api/parse-statement', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileData: b64 }),
-        });
-        if (!resp.ok) throw new Error('Server ไม่สามารถอ่าน PDF ได้');
-        const { text, error: srvErr } = await resp.json();
-        if (srvErr) throw new Error(srvErr);
-        const parsed = parseStatementText(text, data.expCats);
-        applyParsed(parsed);
-      } catch (err) {
-        setError('อ่าน PDF ไม่สำเร็จ: ' + err.message);
-      } finally {
-        setParsing(false);
-      }
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = (e) => res(e.target.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      await parsePDF(b64);
     } else {
       const reader = new FileReader();
       reader.onload = (e) => {
-        try {
-          applyParsed(parseStatementCSV(e.target.result, data.expCats));
-        } catch (err) {
-          setError(err.message);
-        }
+        try { applyParsed(parseStatementCSV(e.target.result, data.expCats)); }
+        catch (err) { setError(err.message); }
       };
       reader.readAsText(f, 'UTF-8');
     }
@@ -1502,6 +1507,31 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
             {parsing ? <><Loader2 size={20} className="animate-spin" /> กำลังอ่าน PDF…</> : <><Upload size={20} /> เลือกไฟล์ CSV หรือ PDF</>}
           </button>
           <input ref={fileRef} type="file" accept=".csv,.pdf,text/csv,application/pdf" onChange={handleFile} className="hidden" />
+
+          {needPassword && (
+            <div className="mt-3 rounded-xl p-3 space-y-2" style={{ background: '#FFF8EC', border: `1px solid ${T.goldSoft}` }}>
+              <p className="text-sm font-medium" style={{ color: '#7A5C16' }}>🔒 PDF นี้ถูกล็อกด้วยรหัสผ่าน</p>
+              <p className="text-xs" style={{ color: '#7A5C16' }}>
+                SCB: วันเกิด <b>DDMMYYYY</b> (เช่น 15051990) หรือเลขบัญชี 10 หลักสุดท้าย
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={pdfPassword}
+                  onChange={e => setPdfPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && parsePDF(pdfB64, pdfPassword)}
+                  placeholder="กรอกรหัสผ่าน PDF"
+                  className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+                  style={{ border: `1px solid ${T.goldSoft}`, background: '#fff' }}
+                />
+                <button onClick={() => parsePDF(pdfB64, pdfPassword)} disabled={parsing || !pdfPassword}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                  style={{ background: pdfPassword ? T.brand : T.line }}>
+                  {parsing ? '…' : 'ลอง'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-sm mt-3 text-center rounded-xl p-2" style={{ color: T.expense, background: '#FCEBE6' }}>{error}</p>}
 
@@ -1574,7 +1604,7 @@ function StatementImportSheet({ data, importTx, me, onClose }) {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => { setStep('upload'); setRows([]); setSelected(new Set()); setError(''); setParsing(false); }}
+            <button onClick={() => { setStep('upload'); setRows([]); setSelected(new Set()); setError(''); setParsing(false); setNeedPassword(false); setPdfPassword(''); setPdfB64(''); }}
               className="flex-1 py-3 rounded-xl text-sm font-medium"
               style={{ background: T.faint, color: T.ink, border: `1px solid ${T.line}` }}>
               เปลี่ยนไฟล์
