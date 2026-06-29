@@ -239,19 +239,19 @@ function parseStatementText(text, expCats, incCats = []) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const rows = [];
 
-  // --- SCB format: DD/MM/YY HH:MM X1|X2 CODE Amount Balance (description on next line)
-  // Use (?!\d) so greedy match stops at 2-digit year and doesn't eat the time digits
-  const SCB_LINE = /^(\d{2})\/(\d{2})\/(\d{2})(?!\d)/;
-  const hasX1X2 = lines.some(l => /X1|X2/.test(l));
+  // --- SCB format: DD/MM/YYYYHH:MM X1|X2 CODE Amount Balance (description on next line)
+  // Date is immediately followed by time (no space): 01/06/2605:51
+  const SCB_LINE = /^(\d{2})\/(\d{2})\/(\d{2})\d{2}:\d{2}/;
+  const hasSCB = lines.some(l => SCB_LINE.test(l));
 
-  if (hasX1X2) {
+  if (hasSCB) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!SCB_LINE.test(line)) continue;
-      if (!/X1|X2/.test(line)) continue;           // skip non-transaction date lines
+      if (!/X1|X2/.test(line)) continue;
 
-      // Parse date (exactly 2-digit year)
-      const dm = line.match(/^(\d{2})\/(\d{2})\/(\d{2})(?!\d)/);
+      // Parse date (exactly 2-digit year followed by time HH:MM)
+      const dm = line.match(/^(\d{2})\/(\d{2})\/(\d{2})/);
       let [, d, mo, y] = dm;
       y = '20' + y;
       const isoDate = `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
