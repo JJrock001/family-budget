@@ -754,8 +754,25 @@ function AddScreen({ data, saveTx, setView, editing, clearEdit, defaultDate, me 
       if (r.category && data.expCats.includes(r.category)) { setCategory(r.category); filled.push('หมวด'); }
       if (r.items) setNote((prev) => prev || String(r.items));
 
-      setScanOk(true);
-      setScanMsg(filled.length ? `✓ AI อ่านแล้ว (${filled.join(' · ')}) — ตรวจความถูกต้องแล้วกดบันทึก` : '⚠️ อ่านรูปได้แต่ไม่พบข้อมูลชัดเจน ลองถ่ายให้ชัดขึ้น หรือกรอกเอง');
+      // Duplicate check against existing transactions
+      const scanAmt = parseFloat(r.amount) || 0;
+      const scanDate = (r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date)) ? r.date : '';
+      const scanMerch = (r.merchant || '').toLowerCase().trim();
+      const dupTx = scanAmt > 0 ? data.tx.find(t => {
+        if (Math.abs((+t.amount) - scanAmt) > 0.01) return false;
+        if (scanDate && t.date !== scanDate) return false;
+        if (!scanMerch) return !!scanDate;
+        const tm = (t.merchant || '').toLowerCase().trim();
+        return tm && (scanMerch.includes(tm) || tm.includes(scanMerch));
+      }) : null;
+
+      if (dupTx) {
+        setScanOk(false);
+        setScanMsg(`⚠️ อาจซ้ำ — มีรายการ "${dupTx.merchant}" ${baht(dupTx.amount)} วันที่ ${fmtDate(dupTx.date)} อยู่แล้ว ตรวจสอบก่อนกดบันทึก`);
+      } else {
+        setScanOk(true);
+        setScanMsg(filled.length ? `✓ AI อ่านแล้ว (${filled.join(' · ')}) — ตรวจความถูกต้องแล้วกดบันทึก` : '⚠️ อ่านรูปได้แต่ไม่พบข้อมูลชัดเจน ลองถ่ายให้ชัดขึ้น หรือกรอกเอง');
+      }
     } catch (er) {
       setScanMsg('❌ ' + (er.message || 'อ่านใบเสร็จไม่สำเร็จ'));
     } finally { setScanning(false); }
