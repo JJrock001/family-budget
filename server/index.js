@@ -19,7 +19,7 @@ app.use('/api/scan-receipt', scanRoutes);
 
 // serve client build in production
 app.use(express.static(path.join(__dirname, '../client/dist')));
-app.get('*', (req, res) => {
+app.get(/^(?!\/api).*/, (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 

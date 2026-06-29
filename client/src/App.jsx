@@ -37,12 +37,14 @@ const DEFAULTS = {
   incCats: ['เงินเดือน','โบนัส','รายได้ธุรกิจ/SMI','ดอกเบี้ย/เงินปันผล','ค่าเช่า','รายได้อื่น ๆ'],
   pays: ['เงินสด','โอน/PromptPay','บัตรเครดิต','บัตรเดบิต','e-Wallet'],
   admin: 'เก๋',
-  tx: [
-    { id:'sal_o', type:'income', date:'2026-06-01', who:'โอ๋', category:'เงินเดือน', merchant:'เงินเดือน', amount:78390, pay:'', note:'', hasPhoto:false },
-    { id:'sal_k', type:'income', date:'2026-06-01', who:'เก๋', category:'เงินเดือน', merchant:'เงินเดือน', amount:69708.33, pay:'', note:'', hasPhoto:false },
-    { id:'sal_jj', type:'income', date:'2026-06-01', who:'เจเจ', category:'เงินเดือน', merchant:'เงินเดือน', amount:14550, pay:'', note:'', hasPhoto:false },
-    { id:'sal_jn', type:'income', date:'2026-06-01', who:'เจนนี่', category:'เงินเดือน', merchant:'เงินเดือน', amount:14550, pay:'', note:'', hasPhoto:false },
+  budgets: {},
+  recurring: [
+    { id:'rec_o',  type:'income', who:'โอ๋',    category:'เงินเดือน', merchant:'เงินเดือน', amount:78390,    pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_k',  type:'income', who:'เก๋',    category:'เงินเดือน', merchant:'เงินเดือน', amount:69708.33, pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_jj', type:'income', who:'เจเจ',   category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
+    { id:'rec_jn', type:'income', who:'เจนนี่', category:'เงินเดือน', merchant:'เงินเดือน', amount:14550,    pay:'', note:'', dayOfMonth:1 },
   ],
+  tx: [],
 };
 
 /* ---------------- helpers ---------------- */
@@ -84,12 +86,13 @@ async function fetchData() {
 
 async function saveData(data) {
   try {
-    await fetch('/api/family-data', {
+    const r = await fetch('/api/family-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-  } catch (e) { console.error(e); }
+    return r.ok;
+  } catch (e) { console.error(e); return false; }
 }
 
 async function getPhoto(id) {
@@ -121,6 +124,45 @@ async function deleteAllPhotos() {
 
 async function meGet() { return localStorage.getItem(MEK); }
 async function meSet(v) { localStorage.setItem(MEK, v); }
+
+/* ---------------- recurring auto-fill ---------------- */
+function applyRecurring(data) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const mm = String(m + 1).padStart(2, '0');
+  const recurring = data.recurring || [];
+  if (recurring.length === 0) return data;
+
+  let changed = false;
+  const tx = [...data.tx];
+
+  for (const rec of recurring) {
+    const already = tx.some(t =>
+      t.recurringId === rec.id &&
+      new Date(t.date + 'T00:00:00').getFullYear() === y &&
+      new Date(t.date + 'T00:00:00').getMonth() === m
+    );
+    if (!already) {
+      const day = String(Math.min(rec.dayOfMonth || 1, 28)).padStart(2, '0');
+      tx.unshift({
+        id: `${rec.id}_${y}_${m}`,
+        recurringId: rec.id,
+        type: rec.type,
+        date: `${y}-${mm}-${day}`,
+        who: rec.who,
+        category: rec.category,
+        merchant: rec.merchant,
+        amount: rec.amount,
+        pay: rec.pay || '',
+        note: rec.note || '',
+        hasPhoto: false,
+      });
+      changed = true;
+    }
+  }
+
+  return changed ? { ...data, tx } : data;
+}
 
 /* ---------------- small UI atoms ---------------- */
 function Chip({ active, onClick, children, color }) {
@@ -165,7 +207,7 @@ export default function App() {
   const [data, setData] = useState(DEFAULTS);
   const [view, setView] = useState('dashboard');
   const now = new Date();
-  const [period, setPeriod] = useState({ y: 2026, m: 5 }); // m: 0-11
+  const [period, setPeriod] = useState({ y: now.getFullYear(), m: now.getMonth() }); // m: 0-11
   const [detail, setDetail] = useState(null);
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState(null);
@@ -175,15 +217,32 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const raw = await fetchData();
-      if (raw) { try { setData(raw); } catch { setData(DEFAULTS); } }
-      else { await saveData(DEFAULTS); }
+      if (raw) {
+        try {
+          const applied = applyRecurring(raw);
+          setData(applied);
+          if (applied !== raw) saveData(applied);
+        } catch { setData(DEFAULTS); }
+      } else {
+        const applied = applyRecurring(DEFAULTS);
+        await saveData(applied);
+        setData(applied);
+      }
       const savedMe = await meGet();
       if (savedMe) setMe(savedMe);
       setLoading(false);
     })();
   }, []);
 
-  const update = (nd) => { setData(nd); saveData(nd); };
+  const update = (nd) => {
+    setData(nd);
+    saveData(nd).then(ok => {
+      if (!ok) {
+        setToast('⚠️ บันทึกไม่สำเร็จ — ตรวจสอบว่า server ทำงานอยู่');
+        setTimeout(() => setToast(null), 3500);
+      }
+    });
+  };
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 1800); };
   const pickMe = (name) => { setMe(name); meSet(name); };
 
@@ -285,8 +344,8 @@ export default function App() {
 
       {toast && (
         <div className="fixed left-0 right-0 flex justify-center z-50" style={{ bottom: 104 }}>
-          <div className="px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2" style={{ background: T.ink, color: '#fff' }}>
-            <Check size={16} /> {toast}
+          <div className="px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2" style={{ background: toast.startsWith('⚠️') ? T.expense : T.ink, color: '#fff', maxWidth: 340, textAlign: 'center' }}>
+            {toast.startsWith('⚠️') ? <AlertCircle size={16} /> : <Check size={16} />} {toast}
           </div>
         </div>
       )}
@@ -416,17 +475,30 @@ function Dashboard({ period, shiftMonth, income, expense, balance, savingRate, b
                 <span className="font-bold" style={{ fontFamily: 'Kanit, sans-serif', fontSize: 22, color: T.ink }}>{baht(expense)}</span>
               </div>
             </div>
-            <div className="mt-3 space-y-1.5">
-              {byCat.slice(0, 6).map((c, i) => (
-                <button key={i} onClick={() => setDetail({ _catFilter: c.name })} className="w-full flex items-center justify-between py-1.5 active:opacity-60">
-                  <span className="flex items-center gap-2 text-sm" style={{ color: T.ink }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: c.color }} /> {c.name}
-                  </span>
-                  <span className="text-sm font-semibold" style={{ fontFamily: 'Kanit, sans-serif' }}>
-                    {baht(c.value)} <span className="text-xs font-normal" style={{ color: T.sub }}>({((c.value / expense) * 100).toFixed(0)}%)</span>
-                  </span>
-                </button>
-              ))}
+            <div className="mt-3 space-y-2">
+              {byCat.slice(0, 6).map((c, i) => {
+                const budget = data.budgets?.[c.name] || 0;
+                const over = budget > 0 && c.value > budget;
+                return (
+                  <button key={i} onClick={() => setDetail({ _catFilter: c.name })} className="w-full py-1 active:opacity-60">
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="flex items-center gap-2" style={{ color: T.ink }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: c.color }} /> {c.name}
+                      </span>
+                      <span className="font-semibold" style={{ fontFamily: 'Kanit, sans-serif', color: over ? T.expense : T.ink }}>
+                        {baht(c.value)}
+                        {budget > 0 && <span className="text-xs font-normal" style={{ color: over ? T.expense : T.sub }}> / {baht(budget)}</span>}
+                        {budget === 0 && <span className="text-xs font-normal" style={{ color: T.sub }}> ({((c.value / expense) * 100).toFixed(0)}%)</span>}
+                      </span>
+                    </div>
+                    {budget > 0 && (
+                      <div style={{ height: 4, borderRadius: 3, background: T.faint }}>
+                        <div style={{ height: 4, borderRadius: 3, width: `${Math.min(c.value / budget * 100, 100)}%`, background: over ? T.expense : c.color, transition: 'width .4s' }} />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}
@@ -901,6 +973,8 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser 
           <EditList title="หมวดรายจ่าย" items={data.expCats} onChange={(v) => update({ ...data, expCats: v })} />
           <EditList title="หมวดรายรับ" items={data.incCats} onChange={(v) => update({ ...data, incCats: v })} />
           <EditList title="วิธีชำระ" items={data.pays} onChange={(v) => update({ ...data, pays: v })} />
+          <BudgetSettings data={data} update={update} />
+          <RecurringSettings data={data} update={update} />
 
           <Section title="ข้อมูล & สำรอง">
             <div className="space-y-2">
@@ -981,6 +1055,139 @@ function EditList({ title, items, onChange, readOnly }) {
             className="flex-1 px-3 py-2 rounded-xl text-sm outline-none" style={{ background: T.faint, border: `1px solid ${T.line}`, color: T.ink }} />
           <button onClick={() => { const v = val.trim(); if (v && !items.includes(v)) { onChange([...items, v]); setVal(''); } }}
             className="px-4 rounded-xl text-white text-sm font-medium active:scale-95 transition-transform" style={{ background: T.brand }}>เพิ่ม</button>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/* ---------------- Budget Settings ---------------- */
+function BudgetSettings({ data, update }) {
+  const [vals, setVals] = useState(() => {
+    const r = {};
+    data.expCats.forEach(c => { r[c] = data.budgets?.[c] ? String(data.budgets[c]) : ''; });
+    return r;
+  });
+
+  const saveVal = (cat, val) => {
+    const budgets = { ...(data.budgets || {}) };
+    const n = parseFloat(val);
+    if (n > 0) budgets[cat] = n; else delete budgets[cat];
+    update({ ...data, budgets });
+  };
+
+  return (
+    <Section title="งบประมาณรายหมวด (บาท/เดือน)">
+      <div className="space-y-2.5">
+        {data.expCats.map(c => {
+          const Ic = EXP_ICON[c] || MoreHorizontal;
+          const col = catColor(data.expCats, c);
+          return (
+            <div key={c} className="flex items-center gap-2">
+              <span style={{ width: 32, height: 32, borderRadius: 8, background: col + '1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Ic size={15} color={col} />
+              </span>
+              <span className="flex-1 text-sm truncate" style={{ color: T.ink }}>{c}</span>
+              <input
+                value={vals[c] || ''}
+                onChange={e => setVals(prev => ({ ...prev, [c]: e.target.value }))}
+                onBlur={e => saveVal(c, e.target.value)}
+                inputMode="numeric"
+                placeholder="ไม่จำกัด"
+                className="w-24 text-right px-2 py-1.5 rounded-xl text-sm outline-none"
+                style={{ background: T.faint, border: `1px solid ${T.line}`, color: T.ink, fontFamily: 'Kanit, sans-serif' }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs mt-3" style={{ color: T.sub }}>ปล่อยว่าง = ไม่จำกัด · บันทึกอัตโนมัติเมื่อออกจากช่อง</p>
+    </Section>
+  );
+}
+
+/* ---------------- Recurring Settings ---------------- */
+function RecurringSettings({ data, update }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ type: 'income', who: data.members[0] || '', category: '', merchant: '', amount: '', dayOfMonth: '1' });
+  const recurring = data.recurring || [];
+  const cats = form.type === 'expense' ? data.expCats : data.incCats;
+
+  const addRec = () => {
+    const amt = parseFloat(form.amount);
+    if (!amt || !form.category || !form.who) return;
+    const newRec = {
+      id: 'rec_' + uid(),
+      type: form.type,
+      who: form.who,
+      category: form.category,
+      merchant: form.merchant.trim() || form.category,
+      amount: amt,
+      pay: '',
+      note: '',
+      dayOfMonth: parseInt(form.dayOfMonth) || 1,
+    };
+    update({ ...data, recurring: [...recurring, newRec] });
+    setAdding(false);
+    setForm({ type: 'income', who: data.members[0] || '', category: '', merchant: '', amount: '', dayOfMonth: '1' });
+  };
+
+  const removeRec = (id) => update({ ...data, recurring: recurring.filter(r => r.id !== id) });
+
+  return (
+    <Section title="รายการประจำ (เพิ่มทุกต้นเดือนอัตโนมัติ)" right={<RotateCcw size={15} color={T.sub} />}>
+      <div className="space-y-2 mb-3">
+        {recurring.length === 0 && <p className="text-sm text-center py-2" style={{ color: T.sub }}>ยังไม่มีรายการประจำ</p>}
+        {recurring.map(r => (
+          <div key={r.id} className="flex items-center gap-2 p-2.5 rounded-xl" style={{ background: T.faint }}>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate" style={{ color: T.ink }}>{r.merchant || r.category}</p>
+              <p className="text-xs" style={{ color: T.sub }}>{r.who} · {r.type === 'income' ? 'รายรับ' : 'รายจ่าย'} · วันที่ {r.dayOfMonth} ของทุกเดือน</p>
+            </div>
+            <span className="text-sm font-semibold flex-shrink-0" style={{ fontFamily: 'Kanit, sans-serif', color: r.type === 'income' ? T.income : T.expense }}>
+              {r.type === 'income' ? '+' : '-'}{baht(r.amount)}
+            </span>
+            <button onClick={() => removeRec(r.id)} className="p-1 rounded-full flex-shrink-0" style={{ background: '#FCEBE6' }}>
+              <X size={14} color={T.expense} />
+            </button>
+          </div>
+        ))}
+      </div>
+      {!adding ? (
+        <button onClick={() => setAdding(true)} className="w-full py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+          style={{ background: T.faint, color: T.brand, border: `1.5px dashed ${T.brand}` }}>
+          <Plus size={16} /> เพิ่มรายการประจำ
+        </button>
+      ) : (
+        <div className="rounded-xl p-3 space-y-2" style={{ background: T.faint, border: `1px solid ${T.line}` }}>
+          <div className="flex gap-2">
+            {[['income','รายรับ'],['expense','รายจ่าย']].map(([v,l]) => (
+              <button key={v} onClick={() => setForm(f => ({...f, type:v, category:''}))} className="flex-1 py-1.5 rounded-lg text-sm font-medium"
+                style={{ background: form.type===v ? T.brand : '#fff', color: form.type===v ? '#fff' : T.sub, border: `1px solid ${form.type===v ? T.brand : T.line}` }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <select value={form.who} onChange={e => setForm(f => ({...f, who:e.target.value}))} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }}>
+            {data.members.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={form.category} onChange={e => setForm(f => ({...f, category:e.target.value}))} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }}>
+            <option value="">เลือกหมวด</option>
+            {cats.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input value={form.merchant} onChange={e => setForm(f => ({...f, merchant:e.target.value}))} placeholder="ชื่อรายการ (ถ้าไม่ใส่ใช้ชื่อหมวด)"
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }} />
+          <div className="flex gap-2">
+            <input value={form.amount} onChange={e => setForm(f => ({...f, amount:e.target.value}))} inputMode="numeric" placeholder="จำนวนเงิน (บาท)"
+              className="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }} />
+            <input value={form.dayOfMonth} onChange={e => setForm(f => ({...f, dayOfMonth:e.target.value}))} inputMode="numeric" placeholder="วันที่"
+              className="w-16 px-3 py-2 rounded-lg text-sm outline-none text-center" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.ink }} />
+          </div>
+          <p className="text-xs" style={{ color: T.sub }}>วันที่ = วันในเดือนที่จะเพิ่มรายการ (1–28)</p>
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setAdding(false)} className="flex-1 py-2 rounded-lg text-sm" style={{ background:'#fff', border:`1px solid ${T.line}`, color:T.sub }}>ยกเลิก</button>
+            <button onClick={addRec} className="flex-1 py-2 rounded-lg text-sm font-medium text-white" style={{ background:T.brand }}>เพิ่มเลย</button>
+          </div>
         </div>
       )}
     </Section>
