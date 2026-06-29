@@ -240,7 +240,8 @@ function parseStatementText(text, expCats, incCats = []) {
   const rows = [];
 
   // --- SCB format: DD/MM/YY HH:MM X1|X2 CODE Amount Balance (description on next line)
-  const SCB_LINE = /^(\d{2})\/(\d{2})\/(\d{2,4})/;
+  // Use (?!\d) so greedy match stops at 2-digit year and doesn't eat the time digits
+  const SCB_LINE = /^(\d{2})\/(\d{2})\/(\d{2})(?!\d)/;
   const hasX1X2 = lines.some(l => /X1|X2/.test(l));
 
   if (hasX1X2) {
@@ -249,11 +250,10 @@ function parseStatementText(text, expCats, incCats = []) {
       if (!SCB_LINE.test(line)) continue;
       if (!/X1|X2/.test(line)) continue;           // skip non-transaction date lines
 
-      // Parse date
-      const dm = line.match(/^(\d{2})\/(\d{2})\/(\d{2,4})/);
+      // Parse date (exactly 2-digit year)
+      const dm = line.match(/^(\d{2})\/(\d{2})\/(\d{2})(?!\d)/);
       let [, d, mo, y] = dm;
-      if (y.length <= 2) y = '20' + y;
-      else if (parseInt(y) > 2400) y = String(parseInt(y) - 543);
+      y = '20' + y;
       const isoDate = `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
 
       const isIncome = /X1/.test(line);
@@ -292,7 +292,57 @@ function parseStatementText(text, expCats, incCats = []) {
     return rows;
   }
 
-  // --- Generic balance-diff fallback for other banks
+  // --- KBank format: DD-MM-YY (always exactly 8 chars) then time/channel/balance/desc/amount
+  const KBANK_DATE = /^(\d{2})-(\d{2})-(\d{2})/;  // simple match; date = line[0..7]
+  const hasKBank = lines.some(l => KBANK_DATE.test(l) && /-/.test(l.slice(0, 8)));
+
+  if (hasKBank) {
+    let prevBalance = null;
+    // Opening balance: skip the fixed 8-char date then read first number
+    for (const line of lines) {
+      if (/ยอดยกมา/.test(line) && KBANK_DATE.test(line)) {
+        const nm = [...line.slice(8).matchAll(/[\d,]+\.\d{2}/g)];
+        if (nm.length > 0) { prevBalance = parseFloat(nm[0][0].replace(/,/g, '')); break; }
+      }
+    }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!KBANK_DATE.test(line) || /ยอดยกมา/.test(line)) continue;
+
+      const dm = line.match(/^(\d{2})-(\d{2})-(\d{2})/);
+      const [, d, mo, y] = dm;
+      const isoDate = `20${y}-${mo}-${d}`;
+
+      // After the fixed 8-char date: [time][channel][balance][description][amount]
+      const afterDate = line.slice(8);
+      const numMatches = [...afterDate.matchAll(/[\d,]+\.\d{2}/g)];
+      if (numMatches.length < 2) continue;
+
+      // KBank: first number = balance, last number = amount
+      const balance = parseFloat(numMatches[0][0].replace(/,/g, ''));
+      const amount  = parseFloat(numMatches[numMatches.length - 1][0].replace(/,/g, ''));
+      if (amount < 0.01) continue;
+
+      let isIncome = true;
+      if (prevBalance !== null) isIncome = balance > prevBalance;
+      else isIncome = /รับ|โอนเข้า|ฝาก|ดอกเบี้ย/.test(line);
+      prevBalance = balance;
+
+      // Description = text between balance and amount numbers
+      const firstEnd  = numMatches[0].index + numMatches[0][0].length;
+      const lastStart = numMatches[numMatches.length - 1].index;
+      const description = afterDate.slice(firstEnd, lastStart).trim();
+
+      const pay = /k plus|internet|mobile/i.test(line) ? 'โอน/PromptPay'
+                : /atm/i.test(line) ? 'เงินสด' : 'โอน/PromptPay';
+      const category = isIncome ? guessCategoryIncome(description, incCats) : guessCategory(description, expCats);
+      const id = 'imp_' + hashStr(`${isoDate}_${Math.round(amount * 100)}_${description.slice(0, 20)}`);
+      rows.push({ id, date: isoDate, description, amount: isIncome ? amount : -amount, category, pay });
+    }
+    return rows;
+  }
+
+  // --- Generic balance-diff fallback (Krungthai, Bangkok Bank CSV-as-text etc.)
   let prevBalance = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
