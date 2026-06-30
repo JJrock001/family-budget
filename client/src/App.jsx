@@ -1375,7 +1375,7 @@ function SettingsScreen({ data, update, flash, me, admin, isAdmin, onSwitchUser,
           <EditList title="หมวดรายรับ" items={data.incCats} readOnly />
           <Section title="ข้อมูล">
             <div className="space-y-2">
-              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv)" onClick={onImport} />
+              <ActionRow icon={Upload} label="นำเข้า Statement ธนาคาร (.csv, .pdf)" onClick={onImport} />
               <ActionRow icon={Download} label="ส่งออกเป็น CSV (สำรองไว้ใน OneDrive)" onClick={exportCSV} />
             </div>
           </Section>
