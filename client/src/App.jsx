@@ -591,9 +591,9 @@ export default function App() {
       `}</style>
 
       <div className="mx-auto" style={{ maxWidth: 440, paddingBottom: 92 }}>
-        {view === 'dashboard' && <Dashboard {...{ period, shiftMonth, income, expense, balance, savingRate, byCat, byPerson, monthly, periodTx, data, setView, setDetail, me, onSwitchUser: () => setMe(null), scope, setScope }} />}
+        {view === 'dashboard' && <Dashboard {...{ period, shiftMonth, setPeriod, income, expense, balance, savingRate, byCat, byPerson, monthly, periodTx, data, setView, setDetail, me, onSwitchUser: () => setMe(null), scope, setScope }} />}
         {view === 'add' && <AddScreen {...{ data, saveTx, setView, editing, me, clearEdit: () => setEditing(null), defaultDate: period.y === now.getFullYear() ? today() : `${period.y}-${String(period.m + 1).padStart(2, '0')}-01`, txMembers }} />}
-        {view === 'list' && <ListScreen {...{ data, period, shiftMonth, setDetail, me, scope, setScope, removeManyTx }} />}
+        {view === 'list' && <ListScreen {...{ data, period, shiftMonth, setPeriod, setDetail, me, scope, setScope, removeManyTx }} />}
         {view === 'settings' && <SettingsScreen {...{ data, update, flash, me, admin, isAdmin, onSwitchUser: () => setMe(null), onImport: () => setShowImport(true) }} />}
       </div>
 
@@ -640,7 +640,7 @@ function NavBtn({ icon: Icon, label, active, onClick }) {
 const AV = ['#0F5C54', '#C99A2E', '#C2410C', '#3F6F8F', '#5B8C5A', '#7C6A9C', '#B5654A', '#4E8D8A'];
 const memberColor = (members, name) => AV[members.indexOf(name) % AV.length] || AV[0];
 
-/* ---------------- Identity picker ---------------- */
+/* ---------------- Month Picker (inline, no duplicate TH_SHORT) ---------------- */
 function IdentityPicker({ members, admin, onPick }) {
   return (
     <div style={{ minHeight: '100vh', fontFamily: 'IBM Plex Sans Thai, sans-serif', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: 'linear-gradient(165deg, #11635A 0%, #0C4742 52%, #0A3531 100%)' }}>
@@ -686,11 +686,42 @@ function IdentityPicker({ members, admin, onPick }) {
   );
 }
 
+/* ---------------- Month Picker ---------------- */
+function MonthPicker({ period, onSelect, onClose }) {
+  const [y, setY] = useState(period.y);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
+      <div className="w-full rounded-t-3xl p-5" style={{ maxWidth: 440, background: '#fff' }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => setY(y - 1)} className="p-2 rounded-full active:bg-gray-100"><ChevronLeft size={20} color={T.sub} /></button>
+          <span className="font-semibold text-base" style={{ fontFamily: 'Kanit, sans-serif' }}>{y}</span>
+          <button onClick={() => setY(y + 1)} className="p-2 rounded-full active:bg-gray-100"><ChevronRight size={20} color={T.sub} /></button>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {TH_SHORT.map((name, m) => {
+            const active = y === period.y && m === period.m;
+            return (
+              <button key={m} onClick={() => { onSelect({ y, m }); onClose(); }}
+                className="py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: active ? T.brand : T.faint, color: active ? '#fff' : T.ink, fontFamily: 'Kanit, sans-serif' }}>
+                {name}
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={onClose} className="w-full mt-4 py-2.5 rounded-xl text-sm font-medium" style={{ background: T.faint, color: T.sub }}>ยกเลิก</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- Dashboard ---------------- */
-function Dashboard({ period, shiftMonth, income, expense, balance, savingRate, byCat, byPerson, monthly, data, setView, setDetail, me, onSwitchUser, scope, setScope }) {
-  const isAdmin = me === (data.admin || 'Kea');
+function Dashboard({ period, shiftMonth, setPeriod, income, expense, balance, savingRate, byCat, byPerson, monthly, data, setView, setDetail, me, onSwitchUser, scope, setScope }) {
+  const isAdmin = me === (data.admin || 'admin');
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   return (
     <div className="screen px-4 pt-5">
+      {showMonthPicker && <MonthPicker period={period} onSelect={setPeriod} onClose={() => setShowMonthPicker(false)} />}
       <div className="flex items-center justify-between mb-3">
         <div>
           <p className="text-xs" style={{ color: T.sub }}>สวัสดี</p>
@@ -707,7 +738,7 @@ function Dashboard({ period, shiftMonth, income, expense, balance, savingRate, b
         <h2 className="text-base font-semibold" style={{ color: T.sub, fontFamily: 'Kanit, sans-serif' }}>ภาพรวมการเงิน</h2>
         <div className="flex items-center gap-1 rounded-full px-1 py-1" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
           <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-full active:bg-gray-100" aria-label="เดือนก่อน"><ChevronLeft size={18} color={T.sub} /></button>
-          <span className="text-sm font-semibold px-1" style={{ minWidth: 96, textAlign: 'center', fontFamily: 'Kanit, sans-serif' }}>{TH_FULL[period.m]} {period.y}</span>
+          <button onClick={() => setShowMonthPicker(true)} className="text-sm font-semibold px-1 active:opacity-60" style={{ minWidth: 96, textAlign: 'center', fontFamily: 'Kanit, sans-serif', color: T.ink }}>{TH_FULL[period.m]} {period.y}</button>
           <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-full active:bg-gray-100" aria-label="เดือนถัดไป"><ChevronRight size={18} color={T.sub} /></button>
         </div>
       </div>
@@ -1075,11 +1106,12 @@ function Field({ label, children }) {
 }
 
 /* ---------------- List ---------------- */
-function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope, removeManyTx }) {
+function ListScreen({ data, period, shiftMonth, setPeriod, setDetail, me, scope, setScope, removeManyTx }) {
   const [typeF, setTypeF] = useState('all');
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [confirmDel, setConfirmDel] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
 
   const rows = useMemo(() => {
     return data.tx.filter(t => { const d = new Date(t.date + 'T00:00:00'); return d.getFullYear() === period.y && d.getMonth() === period.m; })
@@ -1100,6 +1132,7 @@ function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope, 
 
   return (
     <div className="screen px-4 pt-5">
+      {showMonthPicker && <MonthPicker period={period} onSelect={setPeriod} onClose={() => setShowMonthPicker(false)} />}
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-xl font-bold" style={{ fontFamily: 'Kanit, sans-serif' }}>รายการ</h1>
         <div className="flex items-center gap-2">
@@ -1108,7 +1141,7 @@ function ListScreen({ data, period, shiftMonth, setDetail, me, scope, setScope, 
               <button onClick={() => setSelectMode(true)} className="p-1.5 rounded-full active:bg-gray-100" title="เลือกลบ"><Trash2 size={18} color={T.sub} /></button>
               <div className="flex items-center gap-1 rounded-full px-1 py-1" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
                 <button onClick={() => shiftMonth(-1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronLeft size={18} color={T.sub} /></button>
-                <span className="text-sm font-semibold px-1" style={{ minWidth: 90, textAlign: 'center', fontFamily: 'Kanit, sans-serif' }}>{TH_FULL[period.m]} {period.y}</span>
+                <button onClick={() => setShowMonthPicker(true)} className="text-sm font-semibold px-1 active:opacity-60" style={{ minWidth: 90, textAlign: 'center', fontFamily: 'Kanit, sans-serif', color: T.ink }}>{TH_FULL[period.m]} {period.y}</button>
                 <button onClick={() => shiftMonth(1)} className="p-1.5 rounded-full active:bg-gray-100"><ChevronRight size={18} color={T.sub} /></button>
               </div>
             </>
